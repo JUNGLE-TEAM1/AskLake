@@ -59,10 +59,7 @@ export function buildJobListResult(storedJobs, query = {}) {
 }
 
 function normalizeListJob(job) {
-  const normalized = withRuleContract(job);
-  return ["failed", "canceled", "paused"].includes(normalized.status)
-    ? { ...normalized, status: "scheduled" }
-    : normalized;
+  return withRuleContract(job);
 }
 
 function latestRunOutcome(job) {
@@ -1080,7 +1077,10 @@ function runFromSparkResult(run, result) {
     endedAt: result.endedAt ?? new Date().toISOString(),
     errorSummary: success ? "-" : result.error ?? "Spark job failed.",
     failedStage: success ? "-" : result.failedStage ?? "Spark ETL",
+    inputBytes: Number(result.inputBytes || 0),
+    inputFileCount: Number(result.inputFileCount || 0),
     inputRows: formatRows(result.inputRows),
+    outputFileCount: Number(result.outputFileCount || 0),
     outputPath: result.outputPath ?? "-",
     outputRows: formatRows(result.outputRows),
     startedAt: result.startedAt ?? run.startedAt,
@@ -1362,6 +1362,8 @@ function dagStepsFromCommand(job, command, run, sparkResult) {
       ], ["생성 시 확정된 스키마를 Spark 실행 계약에 사용했습니다."]),
       dagStep("read", "3. Spark 소스 읽기", run.inputRows, readFailed ? "failed" : "success", [
         ["입력 행", run.inputRows],
+        ["입력 파일", String(run.inputFileCount ?? "-")],
+        ["입력 용량(bytes)", String(run.inputBytes ?? "-")],
         ["Spark source", sourcePath],
       ], readFailed ? [`Spark 소스 읽기 실패: ${run.errorSummary}`, ...sparkLogs] : [`Spark가 ${run.inputRows}을 읽었습니다.`, ...sparkLogs]),
       dagStep("transform", "4. 처리 규칙 적용", transformMeta, transformFailed ? "failed" : readFailed ? "blocked" : "success", [
@@ -1374,6 +1376,7 @@ function dagStepsFromCommand(job, command, run, sparkResult) {
       dagStep("write", "6. Parquet 적재", outputPath, failed ? "blocked" : "success", [
         ["출력 경로", outputPath],
         ["출력 행", run.outputRows],
+        ["Parquet 파일", String(run.outputFileCount ?? "-")],
       ], failed ? ["이전 단계 실패로 Parquet 적재가 수행되지 않았습니다."] : [`Parquet 출력 완료: ${outputPath}`]),
       dagStep("catalog", "7. 카탈로그 데이터셋 갱신", job.target, failed ? "blocked" : "success", [
         ["데이터셋", job.target],

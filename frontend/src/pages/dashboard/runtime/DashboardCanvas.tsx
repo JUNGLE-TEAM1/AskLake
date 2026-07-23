@@ -10,6 +10,7 @@ import { WidgetFrame } from "./WidgetFrame";
 import { hasAnyLayoutCollision, hasLayoutOutOfBounds } from "./dashboardLayoutUtils";
 
 const breakpointCols = { lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 };
+type DashboardBreakpoint = keyof typeof breakpointCols;
 const gridMargin: [number, number] = [12, 12];
 const gridRowHeight = 48;
 const editGridTrailingRows = 1;
@@ -45,6 +46,7 @@ export function DashboardCanvas({
   onLayoutCommit,
   onLayoutRejected,
   onPatchWidgetConfig,
+  onRetryWidgetData,
   onScrollTargetHandled,
   onSelectWidget,
   onSelectWidgetColorSlot,
@@ -56,10 +58,11 @@ export function DashboardCanvas({
   deletingWidgetId?: string | null;
   editable: boolean;
   onDeleteWidget?: (widgetId: string) => void;
-  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
+  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<boolean>;
   onLayoutCommit?: (layout: LayoutItem[]) => void;
   onLayoutRejected?: () => void;
-  onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
+  onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<boolean>;
+  onRetryWidgetData?: (widgetId: string) => void;
   onScrollTargetHandled?: () => void;
   onSelectWidget?: (widgetId: string) => void;
   onSelectWidgetColorSlot?: (widgetId: string, slotIndex: number) => void;
@@ -137,11 +140,15 @@ export function DashboardCanvas({
     );
   }
 
+  // Draft layouts are persisted in the canonical 12-column coordinate system.
+  const editorBreakpoint: DashboardBreakpoint | undefined = editable ? "lg" : undefined;
+
   return (
     <div className="asklake-dashboard-rgl-shell" ref={containerRef}>
       {mounted && (
-        <Responsive
+        <Responsive<DashboardBreakpoint>
           key={`${editable ? "draft" : "published"}-${resetKey}`}
+          breakpoint={editorBreakpoint}
           breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
           className={editable ? "asklake-dashboard-rgl edit" : "asklake-dashboard-rgl"}
           cols={breakpointCols}
@@ -182,6 +189,7 @@ export function DashboardCanvas({
                 onDelete={onDeleteWidget}
                 onApplyWidgetPatch={onApplyWidgetPatch}
                 onPatchConfig={onPatchWidgetConfig}
+                onRetryData={onRetryWidgetData}
                 onSelect={onSelectWidget}
                 onSelectColorSlot={onSelectWidgetColorSlot}
               />

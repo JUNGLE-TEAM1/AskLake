@@ -1,0 +1,11 @@
+product_id,product_name,category,brand,list_price
+P-1001,무선 마우스,computer_accessories,AskGear,25900
+P-1002,기계식 키보드,computer_accessories,AskGear,89000
+P-1003,USB-C 허브,computer_accessories,LakeLink,49900
+P-1004,27인치 모니터,monitors,BlueLake,329000
+P-1005,노이즈 캔슬링 헤드폰,audio,WaveSound,219000
+P-1006,휴대용 SSD 1TB,storage,LakeStore,149000
+P-1007,웹캠 FHD,cameras,AskVision,69000
+P-1008,노트북 스탠드,office,DeskLake,39000
+P-1009,스마트폰 충전기,mobile,VoltLake,29900
+P-1010,태블릿 파우치,mobile,SoftLake,24900

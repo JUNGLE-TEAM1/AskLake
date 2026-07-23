@@ -2,7 +2,7 @@ import type { IdentityProfile } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
 export type DashboardRuntimeMode = "published" | "draft";
-export type DashboardView = "list" | "builder" | "detail" | "runtime";
+export type DashboardView = "list" | "runtime";
 export type DashboardStatus = "draft" | "published";
 export type DashboardWidgetType = "kpi" | "bar" | "line" | "donut" | "table";
 export type DashboardRuntimeWidgetType =
@@ -17,13 +17,33 @@ export type DashboardRuntimeWidgetType =
   | "heatmap_chart"
   | "treemap_chart";
 export type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
-export type DashboardWidgetDateUnit = "day" | "month" | "year";
+export type DashboardWidgetDateUnit = "minute" | "hour" | "day" | "month" | "year";
 export type DashboardWidgetFormat = "number" | "currency" | "percent";
 export type DashboardWidgetLineCurve = "smooth" | "straight" | "stepline";
 export type DashboardWidgetOrientation = "vertical" | "horizontal";
 export type DashboardWidgetSortDirection = "asc" | "desc";
 export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
 export type DashboardWidgetPlaceholderKind = "visualization_request" | "text";
+export type DashboardWidgetFilterOperator =
+  | "eq"
+  | "in"
+  | "contains"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "between"
+  | "is_null"
+  | "is_not_null";
+export type DashboardWidgetFilterValue = string | number | boolean;
+
+export type DashboardWidgetFilter = {
+  column: string;
+  id: string;
+  operator: DashboardWidgetFilterOperator;
+  value?: DashboardWidgetFilterValue;
+  values?: DashboardWidgetFilterValue[];
+};
 
 export type DashboardWidgetColorConfig = {
   colors: string[];
@@ -31,11 +51,14 @@ export type DashboardWidgetColorConfig = {
 
 export type DashboardWidgetConfigBase = {
   body?: string;
+  dataMode?: "server_aggregated" | "server_preview";
   description?: string;
   error?: string;
   errorMessage?: string;
+  filters?: DashboardWidgetFilter[];
   placeholderKind?: DashboardWidgetPlaceholderKind;
   prompt?: string;
+  sourceConfig?: Record<string, unknown>;
 };
 
 export type MetricWidgetConfig = DashboardWidgetConfigBase & {
@@ -228,10 +251,16 @@ export type DashboardWidgetLayout = {
 };
 
 type DashboardRuntimeWidgetBase = {
+  appliedRevision?: number | null;
+  calculatedAt?: string | null;
+  calculationVersion?: string | null;
   data: Array<Record<string, unknown>>;
+  dataError?: string | null;
+  dataStatus?: "pending" | "loading" | "ready" | "error";
   datasetId?: string | null;
   id: string;
   layout: DashboardWidgetLayout;
+  liveRefresh?: boolean;
   pageId: string;
   queryId?: string | null;
   title: string | null;
@@ -252,6 +281,7 @@ export type DashboardFilter = {
 
 export type DashboardRuntimeResponse = {
   dashboard: DashboardMeta;
+  eventCursor: number;
   filters: DashboardFilter[];
   mode: DashboardRuntimeMode;
   pages: DashboardRuntimePage[];

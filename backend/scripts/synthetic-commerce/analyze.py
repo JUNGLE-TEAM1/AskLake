@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import sqlite3
+import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -164,6 +166,58 @@ FROM ranked
 GROUP BY rating_count_decile
 ORDER BY rating_count_decile;
 """,
+    "category_purchase_intent": """
+SELECT
+  p.category,
+  SUM(e.event_type = 'product_click') AS clicks,
+  SUM(e.event_type = 'add_to_cart') AS carts,
+  SUM(e.event_type = 'purchase_click') AS purchase_clicks,
+  ROUND(100.0 * SUM(e.event_type = 'add_to_cart') /
+        NULLIF(SUM(e.event_type = 'product_click'), 0), 2) AS click_to_cart_pct,
+  ROUND(100.0 * SUM(e.event_type = 'purchase_click') /
+        NULLIF(SUM(e.event_type = 'product_click'), 0), 2) AS click_to_purchase_pct
+FROM click_events e
+JOIN products p ON p.product_id = e.product_id
+GROUP BY p.category
+ORDER BY click_to_purchase_pct DESC;
+""",
+    "daily_metric_counts": """
+WITH daily AS (
+  SELECT
+    SUBSTR(event_time, 1, 10) AS event_date,
+    SUM(event_type = 'product_impression') AS impressions,
+    SUM(event_type = 'product_click') AS clicks,
+    SUM(event_type = 'add_to_cart') AS carts,
+    SUM(event_type = 'purchase_click') AS purchase_clicks
+  FROM click_events
+  GROUP BY SUBSTR(event_time, 1, 10)
+)
+SELECT event_date, 'impressions' AS metric_name, impressions AS metric_value FROM daily
+UNION ALL
+SELECT event_date, 'clicks', clicks FROM daily
+UNION ALL
+SELECT event_date, 'carts', carts FROM daily
+UNION ALL
+SELECT event_date, 'purchase_clicks', purchase_clicks FROM daily
+ORDER BY event_date, metric_name;
+""",
+    "daily_funnel": """
+SELECT
+  SUBSTR(event_time, 1, 10) AS event_date,
+  SUM(event_type = 'product_impression') AS impressions,
+  SUM(event_type = 'product_click') AS clicks,
+  SUM(event_type = 'add_to_cart') AS carts,
+  SUM(event_type = 'purchase_click') AS purchase_clicks,
+  ROUND(100.0 * SUM(event_type = 'product_click') /
+        NULLIF(SUM(event_type = 'product_impression'), 0), 2) AS ctr_pct,
+  ROUND(100.0 * SUM(event_type = 'add_to_cart') /
+        NULLIF(SUM(event_type = 'product_click'), 0), 2) AS click_to_cart_pct,
+  ROUND(100.0 * SUM(event_type = 'purchase_click') /
+        NULLIF(SUM(event_type = 'add_to_cart'), 0), 2) AS cart_to_purchase_click_pct
+FROM click_events
+GROUP BY SUBSTR(event_time, 1, 10)
+ORDER BY event_date;
+""",
 }
 
 
@@ -182,61 +236,111 @@ def markdown_table(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> str
     return "\n".join([header, separator, *body])
 
 
-def load_products(connection: sqlite3.Connection, path: Path) -> int:
-    rows = []
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle):
-            rows.append(
-                (
+def jsonl_rows(paths: Iterable[Path]) -> Iterable[dict[str, Any]]:
+    for path in paths:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    yield json.loads(line)
+
+
+def insert_batches(
+    connection: sqlite3.Connection,
+    statement: str,
+    rows: Iterable[tuple[Any, ...]],
+    batch_size: int = 10_000,
+) -> int:
+    batch: list[tuple[Any, ...]] = []
+    count = 0
+    for row in rows:
+        batch.append(row)
+        if len(batch) >= batch_size:
+            connection.executemany(statement, batch)
+            count += len(batch)
+            batch = []
+    if batch:
+        connection.executemany(statement, batch)
+        count += len(batch)
+    return count
+
+
+def load_products_csv(connection: sqlite3.Connection, path: Path) -> int:
+    def rows() -> Iterable[tuple[Any, ...]]:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                yield (
                     row["product_id"], row["category"], row["leaf_category"], row["title"],
                     row["store"], float(row["price"]), float(row["average_rating"]),
                     int(row["rating_count"]),
                 )
-            )
-    connection.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    return len(rows)
+
+    return insert_batches(connection, "INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows())
 
 
-def load_users(connection: sqlite3.Connection, path: Path) -> int:
-    rows = []
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle):
-            rows.append(
-                (
+def load_users_csv(connection: sqlite3.Connection, path: Path) -> int:
+    def rows() -> Iterable[tuple[Any, ...]]:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                yield (
                     row["user_id"], int(row["age"]), row["gender"], row["region"],
                     row["signup_at"], row["acquisition_channel"], row["membership_tier"],
                     row["primary_device"],
                 )
-            )
-    connection.executemany("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    return len(rows)
+
+    return insert_batches(connection, "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows())
 
 
-def event_batches(path: Path, batch_size: int = 10_000) -> Iterable[list[tuple[Any, ...]]]:
+def load_products_jsonl(connection: sqlite3.Connection, paths: Iterable[Path]) -> int:
+    rows = (
+        (
+            row["product_id"], row["category"], row["leaf_category"], row["title"],
+            row["store"], float(row["price"]), float(row["average_rating"]),
+            int(row["rating_count"]),
+        )
+        for row in jsonl_rows(paths)
+    )
+    return insert_batches(connection, "INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+
+
+def load_users_jsonl(connection: sqlite3.Connection, paths: Iterable[Path]) -> int:
+    rows = (
+        (
+            row["user_id"], int(row["age"]), row["gender"], row["region"],
+            row["signup_at"], row["acquisition_channel"], row["membership_tier"],
+            row["primary_device"],
+        )
+        for row in jsonl_rows(paths)
+    )
+    return insert_batches(connection, "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+
+
+def event_batches(paths: Iterable[Path], batch_size: int = 10_000) -> Iterable[list[tuple[Any, ...]]]:
     batch: list[tuple[Any, ...]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            row = json.loads(line)
-            batch.append(
-                (
-                    row["event_id"], row["user_id"], row["session_id"], row["event_time"],
-                    row["event_type"], row["product_id"], row["page_url"], row["device_type"],
-                    row["referrer"], row.get("properties", {}).get("position"),
-                )
+    for row in jsonl_rows(paths):
+        batch.append(
+            (
+                row["event_id"], row["user_id"], row["session_id"], row["event_time"],
+                row["event_type"], row["product_id"], row["page_url"], row["device_type"],
+                row["referrer"], row.get("properties", {}).get("position"),
             )
-            if len(batch) >= batch_size:
-                yield batch
-                batch = []
+        )
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
     if batch:
         yield batch
 
 
-def load_events(connection: sqlite3.Connection, path: Path) -> int:
+def load_events(connection: sqlite3.Connection, paths: Iterable[Path]) -> int:
     count = 0
-    for batch in event_batches(path):
+    for batch in event_batches(paths):
         connection.executemany("INSERT INTO click_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", batch)
         count += len(batch)
     return count
+
+
+def part_files(data_dir: Path, dataset: str) -> list[Path]:
+    return sorted((data_dir / dataset).glob("part-*.jsonl"))
 
 
 def build_database(data_dir: Path) -> tuple[sqlite3.Connection, dict[str, int]]:
@@ -246,11 +350,19 @@ def build_database(data_dir: Path) -> tuple[sqlite3.Connection, dict[str, int]]:
     connection = sqlite3.connect(database_path)
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(SCHEMA_SQL)
-    counts = {
-        "products": load_products(connection, data_dir / "products.csv"),
-        "users": load_users(connection, data_dir / "users.csv"),
-        "events": load_events(connection, data_dir / "click_events.jsonl"),
-    }
+    if (data_dir / "meta").is_dir():
+        counts = {
+            "products": load_products_jsonl(connection, part_files(data_dir, "meta")),
+            "users": load_users_jsonl(connection, part_files(data_dir, "users")),
+            "events": load_events(connection, part_files(data_dir, "click_events")),
+        }
+    else:
+        # Legacy fixture compatibility for the original three-file layout.
+        counts = {
+            "products": load_products_csv(connection, data_dir / "products.csv"),
+            "users": load_users_csv(connection, data_dir / "users.csv"),
+            "events": load_events(connection, [data_dir / "click_events.jsonl"]),
+        }
     connection.executescript(
         """
         CREATE INDEX idx_events_user ON click_events(user_id);
@@ -279,7 +391,10 @@ def ratio(numerator: float, denominator: float) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-def validate_integrity(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+def validate_integrity(
+    connection: sqlite3.Connection,
+    window: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     checks = [
         {
             "name": "orphan user references",
@@ -341,8 +456,64 @@ def validate_integrity(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             "expected": 0,
         },
     ]
+    if window:
+        checks.append(
+            {
+                "name": "events outside generation window",
+                "value": scalar(
+                    connection,
+                    """
+                    SELECT COUNT(*) FROM click_events
+                    WHERE event_time < ? OR event_time >= ?
+                    """,
+                    (window["start"], window["end_exclusive"]),
+                ),
+                "expected": 0,
+            }
+        )
     for check in checks:
         check["passed"] = check["value"] == check["expected"]
+    return checks
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def validate_manifest_files(data_dir: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate v2+ file size, row count, and checksum evidence."""
+    if manifest.get("generator_version", 0) < 2:
+        return []
+    checks: list[dict[str, Any]] = []
+    for dataset in manifest.get("datasets", {}).values():
+        for expected in dataset.get("files", []):
+            path = data_dir / expected["path"]
+            exists = path.is_file()
+            actual_bytes = path.stat().st_size if exists else None
+            actual_rows = 0
+            actual_sha256 = None
+            if exists:
+                with path.open("rb") as handle:
+                    actual_rows = sum(1 for _ in handle)
+                actual_sha256 = file_sha256(path)
+            passed = (
+                exists
+                and actual_bytes == expected["bytes"]
+                and actual_rows == expected["rows"]
+                and actual_sha256 == expected["sha256"]
+            )
+            checks.append(
+                {
+                    "name": f"manifest evidence: {expected['path']}",
+                    "value": "match" if passed else "mismatch",
+                    "expected": "match",
+                    "passed": passed,
+                }
+            )
     return checks
 
 
@@ -352,7 +523,149 @@ def query_as_dicts(connection: sqlite3.Connection, query: str) -> list[dict[str,
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-def evaluate_patterns(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+def _v3_category_patterns(
+    connection: sqlite3.Connection,
+    profile: dict[str, Any],
+) -> list[dict[str, Any]]:
+    thresholds = profile["thresholds"]
+    category_profile = profile["category_purchase_intent"]["categories"]
+    categories = query_as_dicts(connection, QUERIES["category_purchase_intent"])
+    rates = {row["category"]: row["click_to_purchase_pct"] for row in categories}
+    groups: dict[str, list[float]] = defaultdict(list)
+    for category, item in category_profile.items():
+        groups[item["group"]].append(rates[category])
+    group_means = {name: statistics.mean(values) for name, values in groups.items()}
+    maximum = max(rates.values())
+    minimum = min(rates.values())
+    adjacent_gap = thresholds["category_adjacent_group_gap_pp"]
+    sample_passed = all(
+        row["clicks"] >= thresholds["minimum_clicks_per_category"]
+        and row["purchase_clicks"] >= thresholds["minimum_purchase_clicks_per_category"]
+        for row in categories
+    )
+    ordered_passed = (
+        group_means["high"] - group_means["medium"] >= adjacent_gap
+        and group_means["medium"] - group_means["low"] >= adjacent_gap
+    )
+    spread = maximum - minimum
+    spread_ratio = ratio(maximum, minimum)
+
+    return [
+        {
+            "name": "every category has enough click and purchase-click samples",
+            "observed": min((row["clicks"], row["purchase_clicks"]) for row in categories),
+            "criterion": (
+                f"clicks >= {thresholds['minimum_clicks_per_category']} and purchase_clicks >= "
+                f"{thresholds['minimum_purchase_clicks_per_category']} per category"
+            ),
+            "passed": sample_passed,
+        },
+        {
+            "name": "category purchase-intent groups are ordered with adjacent gaps",
+            "observed": {key: round(value, 3) for key, value in group_means.items()},
+            "criterion": f"high > medium > low with each adjacent gap >= {adjacent_gap}pp",
+            "passed": ordered_passed,
+        },
+        {
+            "name": "category purchase-intent spread is visually distinct",
+            "observed": {"gap_pp": round(spread, 3), "ratio": round(spread_ratio, 3)},
+            "criterion": (
+                f"max-min >= {thresholds['category_max_min_gap_pp']}pp and ratio >= "
+                f"{thresholds['category_max_min_ratio']}"
+            ),
+            "passed": (
+                spread >= thresholds["category_max_min_gap_pp"]
+                and spread_ratio >= thresholds["category_max_min_ratio"]
+            ),
+        },
+    ]
+
+
+def _v3_daily_patterns(
+    connection: sqlite3.Connection,
+    profile: dict[str, Any],
+) -> list[dict[str, Any]]:
+    thresholds = profile["thresholds"]
+    daily_rows = query_as_dicts(connection, QUERIES["daily_funnel"])
+    daily = {row["event_date"]: row for row in daily_rows}
+    date_profiles = profile["date_profiles"]
+    planted_dates = {
+        date
+        for item in date_profiles.values()
+        for date in item["dates"]
+    }
+    ordinary = [row for row in daily_rows if row["event_date"] not in planted_dates]
+    ordinary_impressions = statistics.median(row["impressions"] for row in ordinary)
+    ordinary_ctr = statistics.median(row["ctr_pct"] for row in ordinary)
+    ordinary_click_to_cart = statistics.median(row["click_to_cart_pct"] for row in ordinary)
+
+    campaign = [daily[date] for date in date_profiles["weekend_campaign"]["dates"]]
+    campaign_impressions = statistics.mean(row["impressions"] for row in campaign)
+    campaign_ctr = statistics.mean(row["ctr_pct"] for row in campaign)
+    payday = daily[date_profiles["payday_promotion"]["dates"][0]]
+    payday_traffic_delta_pct = 100.0 * (payday["impressions"] - ordinary_impressions) / ordinary_impressions
+
+    traffic_ratio = ratio(campaign_impressions, ordinary_impressions)
+    ctr_drop = ordinary_ctr - campaign_ctr
+    payday_cart_lift = payday["click_to_cart_pct"] - ordinary_click_to_cart
+    ctr_values = [row["ctr_pct"] for row in daily_rows]
+    cart_values = [row["click_to_cart_pct"] for row in daily_rows]
+
+    return [
+        {
+            "name": "weekend campaign raises traffic and lowers CTR",
+            "observed": {"traffic_ratio": round(traffic_ratio, 3), "ctr_drop_pp": round(ctr_drop, 3)},
+            "criterion": (
+                f"traffic ratio >= {thresholds['weekend_campaign_traffic_ratio']} and CTR drop >= "
+                f"{thresholds['weekend_campaign_ctr_drop_pp']}pp"
+            ),
+            "passed": (
+                traffic_ratio >= thresholds["weekend_campaign_traffic_ratio"]
+                and ctr_drop >= thresholds["weekend_campaign_ctr_drop_pp"]
+            ),
+        },
+        {
+            "name": "payday promotion keeps traffic normal and raises click-to-cart",
+            "observed": {
+                "traffic_delta_pct": round(payday_traffic_delta_pct, 3),
+                "click_to_cart_lift_pp": round(payday_cart_lift, 3),
+            },
+            "criterion": (
+                f"traffic within +/-{thresholds['payday_traffic_tolerance_pct']}% and click-to-cart "
+                f"lift >= {thresholds['payday_click_to_cart_lift_pp']}pp"
+            ),
+            "passed": (
+                abs(payday_traffic_delta_pct) <= thresholds["payday_traffic_tolerance_pct"]
+                and payday_cart_lift >= thresholds["payday_click_to_cart_lift_pp"]
+            ),
+        },
+        {
+            "name": "daily raw counts do not move in fixed parallel ratios",
+            "observed": {
+                "ctr_range_pp": round(max(ctr_values) - min(ctr_values), 3),
+                "click_to_cart_range_pp": round(max(cart_values) - min(cart_values), 3),
+            },
+            "criterion": "CTR range >= 2pp and click-to-cart range >= 3pp",
+            "passed": (
+                max(ctr_values) - min(ctr_values) >= 2.0
+                and max(cart_values) - min(cart_values) >= 3.0
+            ),
+        },
+    ]
+
+
+def evaluate_v3_patterns(
+    connection: sqlite3.Connection,
+    manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    profile = manifest["behavior_profile"]
+    return _v3_category_patterns(connection, profile) + _v3_daily_patterns(connection, profile)
+
+
+def evaluate_patterns(
+    connection: sqlite3.Connection,
+    manifest: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     age_rows = query_as_dicts(connection, QUERIES["age_category_affinity"])
     shares = {(row["age_group"], row["category"]): row["click_share_pct"] for row in age_rows}
     young_audio = shares[("18-34", "Headphones, Earbuds & Accessories")] + shares[("18-34", "Wearable Technology")]
@@ -410,6 +723,8 @@ def evaluate_patterns(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             "passed": device["mobile"]["evening_share_pct"] - device["desktop"]["evening_share_pct"] >= 15,
         },
     ]
+    if manifest and manifest.get("generator_version", 0) >= 3:
+        checks.extend(evaluate_v3_patterns(connection, manifest))
     return checks
 
 
@@ -460,6 +775,9 @@ def write_report(
         "device_time_pattern": "Device time pattern",
         "gender_null_control": "Gender null control",
         "catalog_long_tail": "Catalog popularity long tail",
+        "category_purchase_intent": "Category purchase-click intent",
+        "daily_metric_counts": "Daily raw metrics (long form)",
+        "daily_funnel": "Daily funnel rates",
     }
     for key, query in QUERIES.items():
         columns, rows = rows_for(connection, query)
@@ -483,15 +801,36 @@ def write_report(
 def main() -> None:
     args = parse_args()
     data_dir = args.data_dir.resolve()
-    required = ("products.csv", "users.csv", "click_events.jsonl", "manifest.json")
-    missing = [name for name in required if not (data_dir / name).is_file()]
+    manifest_path = data_dir / "manifest.json"
+    if (data_dir / "meta").is_dir():
+        required = ("meta", "users", "click_events", "manifest.json")
+        missing = [
+            name
+            for name in required
+            if not ((data_dir / name).is_dir() if name != "manifest.json" else manifest_path.is_file())
+        ]
+        for dataset in ("meta", "users", "click_events"):
+            if (data_dir / dataset).is_dir() and not part_files(data_dir, dataset):
+                missing.append(f"{dataset}/part-*.jsonl")
+    else:
+        required = ("products.csv", "users.csv", "click_events.jsonl", "manifest.json")
+        missing = [name for name in required if not (data_dir / name).is_file()]
     if missing:
         raise SystemExit(f"missing generated files: {', '.join(missing)}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     connection, counts = build_database(data_dir)
     try:
-        integrity = validate_integrity(connection)
-        patterns = evaluate_patterns(connection)
+        # V1 fixtures predate the strict end-exclusive clamp and contain two
+        # events just past the window, so strict time-window validation starts at v2.
+        strict_window = manifest.get("window") if manifest.get("generator_version", 0) >= 2 else None
+        integrity = validate_integrity(connection, strict_window)
+        manifest_checks = validate_manifest_files(data_dir, manifest)
+        integrity.extend(manifest_checks)
+        patterns = evaluate_patterns(connection, manifest)
+        category_metrics = query_as_dicts(connection, QUERIES["category_purchase_intent"])
+        daily_metric_counts = query_as_dicts(connection, QUERIES["daily_metric_counts"])
+        daily_funnel = query_as_dicts(connection, QUERIES["daily_funnel"])
         write_report(data_dir, connection, counts, integrity, patterns)
     finally:
         connection.close()
@@ -499,7 +838,11 @@ def main() -> None:
     result = {
         "counts": counts,
         "integrity": integrity,
+        "manifest_files_checked": len(manifest_checks),
         "patterns": patterns,
+        "category_metrics": category_metrics,
+        "daily_metric_counts": daily_metric_counts,
+        "daily_funnel": daily_funnel,
         "all_integrity_passed": all(item["passed"] for item in integrity),
         "all_planted_patterns_passed": all(item["passed"] for item in patterns),
     }

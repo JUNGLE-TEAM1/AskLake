@@ -1,8 +1,11 @@
 import { createReadStream, existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { createGunzip } from "node:zlib";
 import { fileURLToPath } from "node:url";
+
+import { decorateReplayRecord } from "./kafka-replay-record.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultFixturePath = path.resolve(scriptDir, "../fixtures/kafka/amazon-review-fixture.jsonl");
@@ -15,6 +18,7 @@ if (options.help) {
 const dryRun = options.dryRun;
 const broker = options.broker || process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092";
 const topic = options.topic || process.env.ASKLAKE_REVIEW_KAFKA_TOPIC || "reviews.raw";
+const payloadMode = options.payloadMode || process.env.ASKLAKE_REVIEW_PAYLOAD_MODE || "json-envelope";
 const inputPath = path.resolve(
   process.cwd(),
   options.input || process.env.ASKLAKE_REVIEW_FIXTURE_PATH || defaultFixturePath,
@@ -27,6 +31,7 @@ const rate = positiveInteger(options.rate ?? process.env.ASKLAKE_REVIEW_REPLAY_R
 const batchSize = positiveInteger(options.batchSize ?? process.env.ASKLAKE_REVIEW_REPLAY_BATCH_SIZE, "batch-size") || 100;
 const progressEvery = positiveInteger(options.progressEvery ?? process.env.ASKLAKE_REVIEW_REPLAY_PROGRESS_EVERY, "progress-every") || 1000;
 const loop = options.loop ?? process.env.ASKLAKE_REVIEW_REPLAY_LOOP === "true";
+const replayRunId = loop ? randomUUID() : null;
 const maxCycles = positiveInteger(options.maxCycles ?? process.env.ASKLAKE_REVIEW_REPLAY_MAX_CYCLES, "max-cycles");
 const maxMessages = positiveInteger(options.maxMessages ?? process.env.ASKLAKE_REVIEW_REPLAY_MAX_MESSAGES, "max-messages");
 const cycleDelayMs = nonnegativeInteger(options.cycleDelayMs ?? process.env.ASKLAKE_REVIEW_REPLAY_CYCLE_DELAY_MS, "cycle-delay-ms") || 0;
@@ -35,6 +40,10 @@ const burstMaxMessages = positiveInteger(options.burstMaxMessages ?? process.env
 const burstIntervalSeconds = positiveInteger(options.burstIntervalSeconds ?? process.env.ASKLAKE_REVIEW_BURST_INTERVAL_SECONDS, "burst-interval-seconds");
 const burstMode = burstMinMessages !== null || burstMaxMessages !== null || burstIntervalSeconds !== null;
 let stopRequested = false;
+
+if (!["json-envelope", "raw-text"].includes(payloadMode)) {
+  throw new Error("--payload-mode must be json-envelope or raw-text");
+}
 
 if (maxCycles && !loop) {
   throw new Error("--max-cycles requires --loop");
@@ -64,6 +73,7 @@ if (dryRun) {
   console.log(`Broker: ${broker}`);
   console.log(`Limit: ${limit || "all"}`);
   console.log(`Rate: ${rate || "unlimited"} messages/sec`);
+  console.log(`Payload mode: ${payloadMode}`);
   console.log(`Loop: ${loop ? "enabled" : "disabled"}`);
   console.log(`Max cycles: ${maxCycles || "unlimited"}`);
   console.log(`Max messages: ${maxMessages || "unlimited"}`);
@@ -94,7 +104,7 @@ try {
 
 async function inspectInput() {
   let validRecords = 0;
-  for await (const _record of readStandardReviewRecords()) {
+  for await (const _record of readReplayMessages()) {
     validRecords += 1;
   }
   if (validRecords === 0) throw new Error(`Review replay input produced no messages: ${inputPath}`);
@@ -114,10 +124,9 @@ async function produceRecords(producerClient) {
 
     do {
       let sourceRecords = 0;
-      for await (const baseRecord of readStandardReviewRecords()) {
+      for await (const baseMessage of readReplayMessages()) {
         if (stopRequested || (maxMessages && sentRecords + batch.length >= maxMessages) || (cycleTarget && recordsInCycle >= cycleTarget)) break;
-        const record = decorateReplayRecord(baseRecord, cycle, sentRecords + batch.length + 1);
-        batch.push({ key: record.event_id, value: JSON.stringify(record) });
+        batch.push(toKafkaMessage(baseMessage, cycle, sentRecords + batch.length + 1));
         recordsInCycle += 1;
         sourceRecords += 1;
         if (batch.length >= batchSize) {
@@ -161,15 +170,6 @@ function logProgress(sentRecords, lastProgressAt, force = false, cycle = 1) {
   return sentRecords;
 }
 
-function decorateReplayRecord(record, cycle, streamOffset) {
-  if (!loop) return record;
-  return {
-    ...record,
-    event_id: `${record.event_id}--cycle-${String(cycle).padStart(6, "0")}--offset-${streamOffset}`,
-    offset: streamOffset,
-  };
-}
-
 async function* readStandardReviewRecords() {
   let offset = 0;
   let emitted = 0;
@@ -186,7 +186,33 @@ async function* readStandardReviewRecords() {
   }
 }
 
-async function* readJsonLines(targetPath) {
+async function* readReplayMessages() {
+  if (payloadMode === "json-envelope") {
+    yield* readStandardReviewRecords();
+    return;
+  }
+
+  let emitted = 0;
+  for await (const line of readInputLines(inputPath)) {
+    if (!line.trim()) continue;
+    yield line;
+    emitted += 1;
+    if (limit && emitted >= limit) return;
+  }
+}
+
+function toKafkaMessage(baseMessage, cycle, logicalOffset) {
+  if (payloadMode === "raw-text") {
+    return {
+      key: `raw-${cycle}-${logicalOffset}`,
+      value: baseMessage,
+    };
+  }
+  const record = decorateReplayRecord(baseMessage, cycle, logicalOffset, { loop, replayRunId });
+  return { key: record.event_id, value: JSON.stringify(record) };
+}
+
+async function* readInputLines(targetPath) {
   const input = createReadStream(targetPath);
   const source = targetPath.endsWith(".gz") ? input.pipe(createGunzip()) : input;
   const reader = createInterface({ input: source, crlfDelay: Infinity });
@@ -201,6 +227,8 @@ async function* readJsonLines(targetPath) {
     input.destroy?.();
   }
 }
+
+const readJsonLines = readInputLines;
 
 function parseJsonLine(line, lineNumber) {
   try {
@@ -348,7 +376,8 @@ function randomInteger(minimum, maximum) {
 function printUsage() {
   console.log(`Usage: node scripts/seed-kafka-review-fixture.mjs [options]
 
-  --input <path>             JSONL or JSONL.gz review input
+  --input <path>             JSONL input, or TXT/LOG input in raw-text mode
+  --payload-mode <mode>      json-envelope (default) or raw-text
   --topic <topic>            Kafka topic (default: reviews.raw)
   --broker <host:port>       Kafka broker (default: 127.0.0.1:19092)
   --limit <count>            Maximum records per replay cycle

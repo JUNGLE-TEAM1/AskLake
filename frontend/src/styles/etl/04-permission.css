@@ -1,0 +1,20 @@
+.permission-grid {
+  grid-template-columns: minmax(0, 860px) 320px;
+  max-width: var(--layout-main-width);
+}
+
+.permission-actions {
+  border-top: 1px solid #dee1e6;
+  padding-top: 18px;
+}
+
+.form-actions.inline {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.form-actions.inline button {
+  min-width: 112px;
+}

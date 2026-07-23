@@ -33,10 +33,6 @@ type DashboardsResponse = PageEnvelope & {
   dashboards: SavedDashboardCard[];
 };
 
-type DashboardResponse = {
-  dashboard: SavedDashboardCard;
-};
-
 export type DashboardQuery = {
   owner?: string;
   page?: number;
@@ -65,13 +61,33 @@ export type DashboardPageResult = {
 };
 
 const mockLatencyMs = 120;
+const queryResultPageTimeoutMs = 15_000;
 const commerceRoiResultDatasetName = "gold_commerce_channel_roi";
 const commerceRoiJoinTables = ["commerce_orders_daily", "commerce_marketing_spend_daily"];
+const mockQueryRuns = new Map<string, SqlResultDraft>();
 let mockJobs = etlJobs.map((job) => ({ ...job }));
 
 function normalizeJob(job: JobRowData): JobRowData {
   const status = normalizeJobStatus(job.status);
-  return { ...job, status: status === "failed" || status === "canceled" || status === "paused" ? "scheduled" : status };
+  return { ...job, status };
+}
+
+export async function updatePipelineDraft(jobId: string, draft: DraftPipeline): Promise<JobRowData> {
+  const existing = mockJobs.find((job) => job.id === jobId);
+  if (!existing) throw new Error(`Job not found: ${jobId}`);
+  const updated = normalizeJob({
+    ...existing,
+    name: `${draft.target.datasetName.trim() || existing.target}_pipeline`,
+    owner: draft.permission.owner,
+    schedule: draft.schedule.label,
+    scheduleSummary: draft.schedule.summary,
+    target: draft.target.datasetName,
+    targetFormat: draft.target.format,
+    targetLayer: draft.target.layer,
+    updatedAt: new Date().toISOString(),
+  });
+  mockJobs = mockJobs.map((job) => job.id === jobId ? updated : job);
+  return resolveMock(updated);
 }
 
 function normalizeDataset(dataset: CatalogDataset): CatalogDataset {
@@ -285,15 +301,6 @@ export async function getDashboards(query: DashboardQuery = {}): Promise<Dashboa
   return resolveMock(getMockDashboards(query));
 }
 
-export async function saveDashboardCard(card: SavedDashboardCard): Promise<SavedDashboardCard> {
-  if (!apiConfig.useMock) {
-    const result = await apiClient.put<DashboardResponse>(`/api/dashboards/${encodeURIComponent(card.id)}`, card);
-    return result.dashboard;
-  }
-
-  return resolveMock(card);
-}
-
 export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount: number): Promise<PipelineCreationResult> {
   if (!apiConfig.useMock) {
     const result = await apiClient.post<PipelineCreationResult>("/api/etl/jobs", draftPipeline);
@@ -466,8 +473,8 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
           heartbeatAt: new Date().toISOString(),
           status,
         },
-        lastState: status === "running" ? "Continuous Spark streaming" : status === "paused" ? "Continuous worker 일시정지됨" : "Continuous worker 중지됨 · checkpoint 보존",
-        progress: status === "running" ? { label: "Continuous micro-batch 실행 중", value: 66 } : undefined,
+        lastState: status === "running" ? "Spark 실시간 수집 실행 중" : status === "paused" ? "실시간 수집 일시정지됨" : "실시간 수집 중지됨 · 체크포인트 보존",
+        progress: status === "running" ? { label: "실시간 메시지 처리 중", value: 66 } : undefined,
         status: status === "running" ? "running" : status,
       },
     });
@@ -669,24 +676,73 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
   const columns = previewDataset === dataset
     ? previewDataset.schema.slice(0, 6).map(([name]) => name)
     : previewDataset.schema.map(([name]) => name);
-  const rows = previewDataset.sampleRows
-    .slice(0, options.limit)
+  const allRows = previewDataset.sampleRows
     .map((row) => row.slice(0, Math.max(columns.length, 1)));
-
-  return resolveMock({
+  const runId = `sql_preview_${Date.now()}`;
+  const result: SqlResultDraft = {
     baseDatasetId: dataset.id,
     columns,
     datasetId: previewDataset.id,
     datasetName: previewDataset.name,
     executedAt: new Date().toISOString(),
     mode: "preview",
+    hasNext: allRows.length > options.limit,
+    pageLimit: options.limit,
+    pageOffset: 0,
     previewLimit: options.limit,
     query,
     referenceDatasetIds: options.referenceDatasetIds,
-    rowCount: rows.length,
-    rows,
-    runId: `sql_preview_${Date.now()}`,
+    returnedRows: Math.min(allRows.length, options.limit),
+    rangeEnd: Math.min(allRows.length, options.limit),
+    rangeStart: allRows.length === 0 ? 0 : 1,
+    rowCount: allRows.length,
+    rows: allRows.slice(0, options.limit),
+    runId,
     validationKey: options.validationKey,
+  };
+  mockQueryRuns.set(runId, { ...result, rows: allRows });
+  return resolveMock(result);
+}
+
+export type QueryResultPageOptions = {
+  limit?: number;
+  offset: number;
+};
+
+export async function getQueryPreviewPage(runId: string, options: QueryResultPageOptions): Promise<SqlResultDraft> {
+  const limit = options.limit ?? 100;
+  const offset = Math.max(options.offset, 0);
+  if (!apiConfig.useMock) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), queryResultPageTimeoutMs);
+    try {
+      return await apiClient.get<SqlResultDraft>(
+        `/api/query/runs/${encodeURIComponent(runId)}?${params.toString()}`,
+        { signal: controller.signal },
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error("SQL Preview 페이지 요청 시간이 초과되었습니다. 다시 시도해 주세요.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  const stored = mockQueryRuns.get(runId);
+  if (!stored) throw new Error("저장된 SQL Preview 실행 결과를 찾지 못했습니다.");
+  const pageRows = stored.rows.slice(offset, offset + limit);
+  return resolveMock({
+    ...stored,
+    hasNext: pageRows.length > 0 && offset + pageRows.length < stored.rowCount,
+    pageLimit: limit,
+    pageOffset: offset,
+    rangeEnd: pageRows.length === 0 ? 0 : offset + pageRows.length,
+    rangeStart: pageRows.length === 0 ? 0 : offset + 1,
+    returnedRows: pageRows.length,
+    rows: pageRows,
   });
 }
 

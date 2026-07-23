@@ -1,7 +1,6 @@
-import { AlertCircle, BarChart3, Plus, Table2 } from "lucide-react";
+import { AlertCircle, ListChecks, Plus } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/ui/page-header";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
@@ -97,29 +96,23 @@ export function DashboardLandingPage({
 }) {
   return (
     <div className="dashboard-page dashboard-list-page">
-      <PageHeader
-        actions={(
-          <Button
-            className="primary-button dashboard-create-button"
-            disabled={isCreatingDashboard}
-            type="button"
-            size="sm"
-            variant="primary"
-            onClick={onCreateDashboard}
-          >
-            <Plus data-icon="inline-start" /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
-          </Button>
-        )}
-        className="dashboard-page-header"
-        icon={<BarChart3 size={18} />}
-        leadingAlign="center"
-        title="대시보드"
-      />
-
       <div className="dashboard-panel-stack">
         <Panel className="dashboard-table-list">
           <PanelHeader
-            icon={<Table2 size={16} />}
+            actions={
+              <Button
+                disabled={isCreatingDashboard}
+                type="button"
+                size="sm"
+                variant="primary"
+                onClick={onCreateDashboard}
+              >
+                <Plus data-icon="inline-start" /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
+              </Button>
+            }
+            icon={<ListChecks size={16} />}
+            iconVariant="outline"
+            size="section"
             title="대시보드 목록"
           />
           <DashboardListToolbar

@@ -1,0 +1,244 @@
+:root {
+  --asklake-font-weight-regular: 400;
+  --asklake-font-weight-medium: 500;
+  --asklake-font-weight-semibold: 600;
+  --asklake-font-weight-bold: 700;
+  --page-title-font-weight: var(--asklake-font-weight-bold);
+}
+
+body {
+  font-weight: var(--asklake-font-weight-regular);
+}
+
+/*
+ * AskLake typography contract
+ *
+ * 400: body, descriptions, metadata, values in detail lists
+ * 500: navigation, field labels, table headers, secondary controls
+ * 600: selected states, status badges, primary actions, section titles
+ * 700: page titles and key metrics only
+ *
+ * This file is the final style import so legacy feature styles cannot restore
+ * 800-950 weights. Semantic slots below opt important content back into 600/700.
+ */
+#root :where(span, em) {
+  font-weight: var(--asklake-font-weight-regular) !important;
+}
+
+#root :where(.font-medium, .font-semibold) {
+  font-weight: var(--asklake-font-weight-medium) !important;
+}
+
+#root :where(.font-bold) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}
+
+#root :where(.font-extrabold, .font-black, [class~="font-[850]"]) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}
+
+#root :where(p, small, caption, figcaption, dd, input, textarea, select, option, code, pre) {
+  font-weight: var(--asklake-font-weight-regular) !important;
+}
+
+#root :where(label, legend, dt, th, button, [role="button"], a, [role="tab"], [role="menuitem"], summary, strong, b) {
+  font-weight: var(--asklake-font-weight-medium) !important;
+}
+
+#root :where(h1, [data-slot="page-title"], .page-title h1, .dashboard-header h1) {
+  font-weight: var(--asklake-font-weight-bold) !important;
+}
+
+#root :where(h2, h3, h4, h5, h6, [data-slot="panel-title"], .dialog-title, .card-title) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}
+
+#root :where(
+  [data-slot="button"][data-variant="primary"],
+  [data-slot="button"][data-variant="destructive"],
+  .primary-button,
+  .danger-button,
+  .app-page-primary-action,
+  .landing-header-cta,
+  .landing-button-dark,
+  .login-card > button[type="submit"]
+) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}
+
+#root :where(
+  [data-status="true"],
+  [data-slot="badge"][data-variant="destructive"],
+  [data-slot="badge"][data-variant="success"],
+  [data-slot="badge"][data-variant="warning"],
+  [data-slot="progress-value"],
+  [data-slot="data-table-primary"],
+  [role="status"],
+  .status-badge,
+  .status-pill,
+  .run-status-pill,
+  .audit-log-item em,
+  .etl-wizard-step-status,
+  .etl-wizard-current-label
+) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}
+
+#root :where(
+  [data-slot="tabs-trigger"][data-state="active"],
+  [data-slot="toggle-group-item"][data-state="on"],
+  [data-slot="accordion-trigger"][data-state="open"],
+  [data-slot="chip"][data-selected="true"],
+  [aria-current="page"],
+  [aria-selected="true"],
+  .nav-item.active,
+  .nav-item.active span,
+  .step-dot.active,
+  .step-label.active,
+  .login-mode-switch button.active,
+  .asklake-explorer-tree-row-content[data-selected]
+) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}
+
+#root :where(
+  [data-slot="metric-value"],
+  [data-slot="metric-value"] span,
+  [data-slot="page-title"] span,
+  .detail-metric-card strong,
+  .run-summary-metric strong,
+  .dashboard-metric-card > strong,
+  .asklake-metric-widget strong,
+  .catalog-mini-metric strong,
+  .admin-console-metric strong,
+  .hegun-rule-metric strong,
+  .landing-quality strong
+) {
+  font-weight: var(--asklake-font-weight-bold) !important;
+}
+
+#root :where(
+  [data-slot="metric-label"],
+  [data-slot="metric-label"] span,
+  [data-slot="progress-label"],
+  [data-slot="user-name"],
+  [data-slot="pagination-page-label"],
+  .detail-metric-card span,
+  .run-summary-metric span,
+  .dashboard-metric-card > span,
+  .asklake-metric-widget span,
+  .catalog-mini-metric span,
+  .admin-console-metric span,
+  .hegun-rule-metric div span
+) {
+  font-weight: var(--asklake-font-weight-medium) !important;
+}
+
+#root :where(
+  [data-slot="metric-detail"],
+  [data-slot="metric-detail"] span,
+  [data-slot="panel-description"],
+  [data-slot="data-table-secondary"],
+  [data-slot="user-secondary"],
+  [data-slot="pagination-summary"]
+) {
+  font-weight: var(--asklake-font-weight-regular) !important;
+}
+
+#root :where(.nav-eyebrow, .etl-wizard-breadcrumb, .step-dot, .step-label, .app-toast, .app-api-pending) {
+  font-weight: var(--asklake-font-weight-medium) !important;
+}
+
+#root :where(
+  .landing-brand,
+  .landing-brand span,
+  .login-brand strong,
+  .landing-hero h1.landing-hero-wordmark
+) {
+  font-weight: var(--asklake-font-weight-bold) !important;
+}
+
+#root :where(
+  .landing-query-tabs strong
+) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}
+
+#root :where(
+  .landing-header nav,
+  .landing-footer nav,
+  .landing-section-label,
+  .landing-team-photo span,
+  .landing-button,
+  .landing-source-stack span,
+  .landing-lake-basin span,
+  .landing-window-topbar > strong,
+  .landing-quality span,
+  .login-tagline,
+  .workspace-route-loading
+) {
+  font-weight: var(--asklake-font-weight-medium) !important;
+}
+
+#root :where(.landing-query-results div, .landing-schema-panel small, .landing-lineage-panel small) {
+  font-weight: var(--asklake-font-weight-regular) !important;
+}
+
+#root :where(
+  [data-slot="button"] span,
+  [data-slot="tabs-trigger"] span,
+  [data-slot="toggle-group-item"] span,
+  [data-slot="panel-title"] span,
+  .field > span,
+  .etl-wizard-step-count,
+  .target-partition-header,
+  .etl-review-validation span
+) {
+  font-weight: var(--asklake-font-weight-medium) !important;
+}
+
+#root :where(
+  .s3-path-empty,
+  .s3-path-text,
+  .target-partition-type,
+  .catalog-result-tags,
+  .etl-review-schema-null,
+  .etl-review-schema-type
+) {
+  font-weight: var(--asklake-font-weight-regular) !important;
+}
+
+#root :where(.target-partition-name) {
+  font-weight: var(--asklake-font-weight-medium) !important;
+}
+
+#root :where(.target-partition-option.active .target-partition-name) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}
+
+#root :where(.profile-avatar, .profile-group-row em) {
+  font-weight: var(--asklake-font-weight-medium) !important;
+}
+
+#root :where(.profile-role, .admin-console-chip) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}
+
+#root :where(.profile-permission-card span) {
+  font-weight: var(--asklake-font-weight-bold) !important;
+}
+
+#root :where(
+  [data-slot="button"][data-variant="primary"] span,
+  [data-slot="button"][data-variant="destructive"] span,
+  [data-status="true"],
+  [data-status="true"] span,
+  [aria-current="page"] span,
+  [aria-selected="true"] span,
+  .landing-story-copy h2 span,
+  .landing-story-copy h2 em,
+  .catalog-lineage-mini span,
+  .admin-console-readonly-badge
+) {
+  font-weight: var(--asklake-font-weight-semibold) !important;
+}

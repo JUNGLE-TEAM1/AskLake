@@ -1,7 +1,10 @@
 import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig } from "../types";
 import { apiClient } from "./apiClient";
+import type { ApiRequestOptions } from "./apiClient";
 
-const assistantEndpoint = (import.meta.env.VITE_DASHBOARD_ASSISTANT_API_PATH ?? "/api/dashboards/assistant").trim();
+// Docker build args are exposed to Vite as empty strings when omitted. Treat an
+// empty value like an unset value so every build keeps the live same-origin API.
+const assistantEndpoint = (import.meta.env.VITE_DASHBOARD_ASSISTANT_API_PATH || "/api/dashboards/assistant").trim();
 
 export type DashboardAssistantMode = "dashboard_question" | "visualization_request";
 
@@ -17,9 +20,11 @@ export type DashboardAssistantWidgetContext = {
 
 export type DashboardAssistantRequest = {
   dashboardId?: string;
+  currentDatasetId?: string | null;
   mode: DashboardAssistantMode;
   pageId?: string | null;
   prompt: string;
+  selectedDatasetIds?: string[];
   selectedWidgetId?: string | null;
   widgetId?: string | null;
   widgets: DashboardAssistantWidgetContext[];
@@ -34,6 +39,7 @@ export type DashboardAssistantWidgetPatch = {
 
 export type DashboardAssistantCreateWidgetAction = {
   type: "create_widget";
+  usedEvidenceIds?: string[];
   widget: {
     config: DashboardRuntimeWidgetConfig;
     datasetId: string;
@@ -45,12 +51,14 @@ export type DashboardAssistantCreateWidgetAction = {
 export type DashboardAssistantUpdateWidgetAction = {
   patch: DashboardAssistantWidgetPatch;
   type: "update_widget";
+  usedEvidenceIds?: string[];
   widgetId: string;
 };
 
 export type DashboardAssistantReportAction = {
   markdown: string;
   type: "report";
+  usedEvidenceIds?: string[];
 };
 
 export type DashboardAssistantAction =
@@ -62,8 +70,45 @@ export type DashboardAssistantResponse = {
   actions: DashboardAssistantAction[];
   configPatch?: Record<string, unknown>;
   message: string;
+  model?: string | null;
+  provider?: string | null;
+  requestId?: string | null;
+  retrieval?: {
+    aliases?: string[];
+    datasetIds?: string[];
+    provenance?: string;
+    resultCount?: number;
+    fallbackEvidenceCount?: number;
+    fallbackReasons?: string[];
+    degradationReasons?: string[];
+    queryPlannerProvider?: string | null;
+    queryPlannerModel?: string | null;
+    queryEmbeddings?: Record<string, { provider?: string | null; model?: string | null; dimensions?: number | null }>;
+    relevanceProvider?: string | null;
+    relevanceModel?: string | null;
+    semanticModelNames?: string[];
+    semanticModelVersions?: Array<number | null>;
+    status?: string;
+  };
+  sources?: Array<{
+    body?: string;
+    chunkIndex?: number;
+    chunkingStrategy?: string;
+    datasetId?: string;
+    documentId?: string;
+    embeddingModel?: string;
+    embeddingProvider?: string;
+    fallbackApplied?: boolean;
+    fallbackReason?: string;
+    fallbackReasons?: string[];
+    metadata?: Record<string, unknown>;
+    parentDocumentId?: string;
+    semanticModelIds?: string[];
+    title?: string;
+  }>;
   warnings: string[];
   widgetPatch?: DashboardAssistantWidgetPatch;
+  usedEvidenceIds?: string[];
 };
 
 export class DashboardAssistantNotConfiguredError extends Error {
@@ -79,6 +124,16 @@ export function isDashboardAssistantConfigured() {
 
 export function dashboardAssistantEndpointLabel() {
   return assistantEndpoint || "VITE_DASHBOARD_ASSISTANT_API_PATH";
+}
+
+export function dashboardEvidenceSummary(response: DashboardAssistantResponse) {
+  const sources = response.sources ?? [];
+  if (sources.length === 0) return "";
+  const labels = sources.map((source, index) => {
+    const label = source.title || source.body?.trim().slice(0, 120) || source.datasetId || source.documentId || "근거 문서";
+    return `${index + 1}. ${label}`;
+  });
+  return `RAG 근거 ${sources.length}건 · ${labels.join(" / ")}`;
 }
 
 export function buildDashboardAssistantWidgetContext(widget: DashboardRuntimeWidget): DashboardAssistantWidgetContext {
@@ -97,14 +152,20 @@ function normalizeEndpoint(path: string) {
   return path.startsWith("/") ? path : `/${path}`;
 }
 
-async function postAbsoluteUrl(endpoint: string, body: DashboardAssistantRequest) {
+async function postAbsoluteUrl(
+  endpoint: string,
+  body: DashboardAssistantRequest,
+  options: ApiRequestOptions,
+) {
   const response = await fetch(endpoint, {
     body: JSON.stringify(body),
+    credentials: "include",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
     },
     method: "POST",
+    signal: options.signal,
   });
 
   if (!response.ok) {
@@ -114,12 +175,15 @@ async function postAbsoluteUrl(endpoint: string, body: DashboardAssistantRequest
   return response.json() as Promise<DashboardAssistantResponse>;
 }
 
-export async function requestDashboardAssistant(body: DashboardAssistantRequest) {
+export async function requestDashboardAssistant(
+  body: DashboardAssistantRequest,
+  options: ApiRequestOptions = {},
+) {
   if (!assistantEndpoint) throw new DashboardAssistantNotConfiguredError();
 
   if (/^https?:\/\//i.test(assistantEndpoint)) {
-    return postAbsoluteUrl(assistantEndpoint, body);
+    return postAbsoluteUrl(assistantEndpoint, body, options);
   }
 
-  return apiClient.post<DashboardAssistantResponse>(normalizeEndpoint(assistantEndpoint), body);
+  return apiClient.post<DashboardAssistantResponse>(normalizeEndpoint(assistantEndpoint), body, options);
 }

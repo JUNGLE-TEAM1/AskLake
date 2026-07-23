@@ -5,26 +5,33 @@ from uuid import uuid4
 from sqlalchemy import String, and_, cast, or_, select
 from sqlalchemy.orm import Session
 
+from app.domain.audit import (
+    AUDIT_TARGET_TYPES,
+    KNOWN_AUDIT_TARGET_TYPES,
+    AuditTargetType,
+    normalize_audit_target_type,
+    require_writable_audit_target_type,
+)
 from app.models.base import Base
 from app.models.identity import AuditEventModel
 from app.schemas.identity import AdminAuditLogEntry
 
 ALLOWED_AUDIT_RESULTS = {"success", "failed", "forbidden"}
-ALLOWED_AUDIT_TARGET_TYPES = {"etl_job", "dataset", "dashboard", "ai_module", "admin_module", "ui", "auth", "user", "group"}
+ALLOWED_AUDIT_TARGET_TYPES = AUDIT_TARGET_TYPES
 
 
 def ensure_audit_event_table(db: Session) -> None:
     Base.metadata.create_all(bind=db.get_bind(), tables=[AuditEventModel.__table__])
 
 
-def record_audit_event(
+def add_audit_event(
     db: Session,
     *,
     action: str,
     actor: Any,
     api_path: str,
     target_id: str,
-    target_type: str,
+    target_type: AuditTargetType,
     result: str = "success",
     http_method: str | None = None,
     metadata: dict[str, Any] | None = None,
@@ -33,6 +40,8 @@ def record_audit_event(
     target_name: str | None = None,
 ) -> AuditEventModel:
     ensure_audit_event_table(db)
+    normalized_target_type = require_writable_audit_target_type(target_type)
+    audit_metadata = dict(metadata or {})
     row = AuditEventModel(
         id=f"audit_{uuid4().hex}",
         action=action.strip() or "audit.event",
@@ -46,11 +55,16 @@ def record_audit_event(
         status_code=status_code,
         target_id=target_id,
         target_name=target_name,
-        target_type=normalize_target_type(target_type),
+        target_type=normalized_target_type.value,
         http_method=http_method,
-        metadata_=metadata or {},
+        metadata_=audit_metadata,
     )
     db.add(row)
+    return row
+
+
+def record_audit_event(db: Session, **kwargs: Any) -> AuditEventModel:
+    row = add_audit_event(db, **kwargs)
     db.commit()
     db.refresh(row)
     return row
@@ -71,7 +85,7 @@ def list_audit_events(
     from_at: datetime | None = None,
     limit: int = 100,
     query: str | None = None,
-    resource_type: str | None = None,
+    resource_type: str | AuditTargetType | None = None,
     result: str | None = None,
     to_at: datetime | None = None,
 ) -> list[AdminAuditLogEntry]:
@@ -81,7 +95,11 @@ def list_audit_events(
         like_actor = f"%{actor_id.strip()}%"
         conditions.append(or_(AuditEventModel.actor_id.ilike(like_actor), AuditEventModel.actor_name.ilike(like_actor)))
     if resource_type:
-        conditions.append(AuditEventModel.target_type == normalize_target_type(resource_type))
+        normalized_resource_type = normalize_target_type(resource_type)
+        if normalized_resource_type is AuditTargetType.UNKNOWN:
+            conditions.append(AuditEventModel.target_type.not_in(KNOWN_AUDIT_TARGET_TYPES))
+        else:
+            conditions.append(AuditEventModel.target_type == normalized_resource_type.value)
     if result:
         conditions.append(AuditEventModel.result == normalize_result(result))
     if from_at:
@@ -107,6 +125,10 @@ def list_audit_events(
 
 
 def row_to_admin_audit_log(row: AuditEventModel) -> AdminAuditLogEntry:
+    target_type = normalize_target_type(row.target_type)
+    metadata = dict(row.metadata_ or {})
+    if target_type is AuditTargetType.UNKNOWN and row.target_type != AuditTargetType.UNKNOWN.value:
+        metadata["rawTargetType"] = row.target_type
     return AdminAuditLogEntry(
         action=row.action,
         actor_id=row.actor_id,
@@ -117,13 +139,13 @@ def row_to_admin_audit_log(row: AuditEventModel) -> AdminAuditLogEntry:
         created_at=to_iso_z(row.created_at),
         http_method=row.http_method,
         ip_address=row.ip_address,
-        metadata=row.metadata_ or {},
+        metadata=metadata,
         request_id=row.request_id,
         result=normalize_result(row.result),
         status_code=row.status_code,
         target_id=row.target_id,
         target_name=row.target_name,
-        target_type=normalize_target_type(row.target_type),
+        target_type=target_type,
     )
 
 
@@ -132,9 +154,8 @@ def normalize_result(value: str) -> str:
     return normalized if normalized in ALLOWED_AUDIT_RESULTS else "failed"
 
 
-def normalize_target_type(value: str) -> str:
-    normalized = value.strip()
-    return normalized if normalized in ALLOWED_AUDIT_TARGET_TYPES else "ui"
+def normalize_target_type(value: str | AuditTargetType) -> AuditTargetType:
+    return normalize_audit_target_type(value)
 
 
 def normalize_datetime(value: datetime) -> datetime:

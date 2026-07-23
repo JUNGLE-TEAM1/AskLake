@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["namespace", "configMap"],
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "const": "asklake-dev"
+    },
+    "configMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "data"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "asklake-runtime"
+        },
+        "data": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" },
+          "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
+          "properties": {
+            "ASKLAKE_SPARK_RESOURCE_PLANNER_MODE": {
+              "type": "string",
+              "enum": ["off", "shadow", "enforce"]
+            },
+            "ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES": {
+              "type": "string",
+              "const": "134217728"
+            },
+            "ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR": {
+              "type": "string",
+              "const": "384"
+            },
+            "ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS": {
+              "type": "string",
+              "const": "1"
+            },
+            "ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS": {
+              "type": "string",
+              "const": "4"
+            },
+            "ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES": {
+              "type": "string",
+              "enum": ["1", "2", "3", "4"]
+            },
+            "ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES": {
+              "type": "string",
+              "enum": ["0", "10737418240"]
+            }
+          }
+        }
+      }
+    }
+  }
+}

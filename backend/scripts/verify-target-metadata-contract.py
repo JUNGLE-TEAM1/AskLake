@@ -1,3 +1,5 @@
+import os
+
 from app.models.etl import ETLJobModel
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.etl import CreatePipelineRequest
@@ -5,9 +7,12 @@ from app.services.etl_service import (
     dataset_from_spark_result,
     job_payload_for_spark,
     normalize_optional_text,
+    normalize_spark_output_storage_path,
     normalize_string_list,
     normalize_target_tags,
+    validate_catalog_output_identity,
 )
+from app.services.iceberg_writer_service import build_iceberg_writer_target
 
 
 def main() -> None:
@@ -85,6 +90,12 @@ def main() -> None:
         index_columns=normalize_string_list(request.index_columns),
         compression=request.compression,
         storage_path=request.storage_path,
+        iceberg_target=build_iceberg_writer_target(
+            request.target_dataset,
+            "ds_target_metadata_contract",
+            write_mode="replace",
+            partition_columns=normalize_string_list(request.partition_columns),
+        ).model_dump(mode="json", by_alias=True),
         target_description=normalize_optional_text(request.target_description),
         target_tags=normalize_target_tags(request.target_tags),
         target_format=request.target_format,
@@ -114,6 +125,9 @@ def main() -> None:
     assert spark_payload["partitionColumns"] == ["event_date"]
     assert spark_payload["indexColumns"] == ["amount"]
     assert spark_payload["compression"] == "Snappy"
+    assert spark_payload["icebergTarget"]["writeMode"] == "replace"
+    assert spark_payload["icebergTarget"]["partitionColumns"] == ["event_date"]
+    assert spark_payload["icebergTarget"]["tableUri"].startswith("iceberg://iceberg/asklake/")
 
     dataset = dataset_from_spark_result(
         job,
@@ -140,6 +154,22 @@ def main() -> None:
     assert response["partition"] == "event_date"
     assert response["partitionColumns"] == ["event_date"]
     assert response["indexColumns"] == ["amount"]
+
+    previous_output_bucket = os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET")
+    try:
+        os.environ["ASKLAKE_SPARK_OUTPUT_BUCKET"] = "asklake-dev-output-123-apne2"
+        job.storage_path = "s3a://asklake-output/products/gold/"
+        assert normalize_spark_output_storage_path(job.storage_path) == "s3a://asklake-dev-output-123-apne2/products/gold/"
+        validate_catalog_output_identity(
+            job,
+            "run_target_metadata_contract",
+            "s3a://asklake-dev-output-123-apne2/products/gold/run_target_metadata_contract",
+        )
+    finally:
+        if previous_output_bucket is None:
+            os.environ.pop("ASKLAKE_SPARK_OUTPUT_BUCKET", None)
+        else:
+            os.environ["ASKLAKE_SPARK_OUTPUT_BUCKET"] = previous_output_bucket
 
     print("verify-target-metadata-contract: ok")
 

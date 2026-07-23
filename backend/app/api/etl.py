@@ -1,32 +1,35 @@
 from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.auth_context import ActorContext, get_actor_context
+from app.core.auth_context import ActorContext, get_actor_context, require_permission
 from app.core.database import get_db
+from app.core.errors import ApiError
+from app.core.observability import increment_metric
 from app.schemas.etl import (
     CreatePipelineRequest,
     CreatePipelineResponse,
+    CreateTrinoSqlJobRequest,
+    DeleteJobResponse,
     ContinuousCompactionRequest,
+    ContinuousIcebergMaintenanceRequest,
     ContinuousMaintenanceRun,
     ContinuousQuarantineResponse,
     ContinuousReplayRequest,
     ContinuousWorkerLogsResponse,
     AirflowRunExecutionRequest,
     AirflowRunExecutionResponse,
+    PermissionOptionsResponse,
+    RecordParsingPreviewRequest,
+    RecordParsingPreviewResponse,
     JobCommandRequest,
     JobCommandResponse,
     JobListResponse,
-    PermissionOptionsResponse,
     JobRowData,
     JobRunOutcome,
     JobScheduleKind,
     JobStatus,
     ReviewPipelineRequest,
     ReviewSnapshot,
-    RulePreviewRequest,
-    RulePreviewResponse,
-    RecordParsingPreviewRequest,
-    RecordParsingPreviewResponse,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
     KafkaReplayProducerRequest,
@@ -43,10 +46,38 @@ from app.schemas.etl import (
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
+from app.schemas.job_status import JobStatusListResponse
 from app.services import etl_service
 from app.services.kafka_replay_producer_service import replay_producer_manager
 
 router = APIRouter(prefix="/etl", tags=["etl"])
+
+
+@router.post("/sources/test", response_model=SourceConnectorAnalysis)
+def test_source_connector(
+    request: SourceConnectorRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> SourceConnectorAnalysis:
+    require_permission(actor, "manage", resource_label="source connector")
+    return etl_service.test_source_connector(request)
+
+
+@router.post("/sources/assets", response_model=SourceAssetsResponse)
+def list_source_assets(
+    request: SourceAssetsRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> SourceAssetsResponse:
+    require_permission(actor, "manage", resource_label="source connector")
+    return etl_service.list_source_assets(request)
+
+
+@router.post("/schema-inference", response_model=SchemaDraft)
+def infer_schema(
+    request: SourceConnectorRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> SchemaDraft:
+    require_permission(actor, "manage", resource_label="source connector")
+    return etl_service.infer_schema(request)
 
 
 @router.get("/sources/defaults", response_model=SourceConnectorDefaults)
@@ -54,41 +85,37 @@ def get_source_connector_defaults() -> SourceConnectorDefaults:
     return etl_service.source_connector_defaults()
 
 
-@router.post("/sources/test", response_model=SourceConnectorAnalysis)
-def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
-    return etl_service.test_source_connector(request)
-
-
-@router.post("/sources/assets", response_model=SourceAssetsResponse)
-def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
-    return etl_service.list_source_assets(request)
-
-
-@router.post("/schema-inference", response_model=SchemaDraft)
-def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
-    return etl_service.infer_schema(request)
-
-
-@router.post("/rules/preview", response_model=RulePreviewResponse)
-def preview_rules(request: RulePreviewRequest) -> RulePreviewResponse:
-    return etl_service.preview_rules(request)
-
-
 @router.post("/record-parsing/preview", response_model=RecordParsingPreviewResponse)
 def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsingPreviewResponse:
     return etl_service.preview_record_parsing(request)
 
 
+@router.get("/permission-options", response_model=PermissionOptionsResponse)
+def get_permission_options(
+    job_id: str | None = Query(default=None, alias="jobId"),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> PermissionOptionsResponse:
+    return etl_service.get_permission_options(db, actor, job_id)
+
+
 @router.post("/review", response_model=ReviewSnapshot)
-def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
-    return etl_service.review_pipeline(request)
+def review_pipeline(
+    request: ReviewPipelineRequest,
+    actor: ActorContext = Depends(get_actor_context),
+    db: Session = Depends(get_db),
+) -> ReviewSnapshot:
+    require_permission(actor, "manage", resource_label="source connector")
+    return etl_service.review_pipeline(request, db=db, actor=actor)
 
 
 @router.post("/kafka/reviews/ingest", response_model=KafkaReviewIngestResponse)
 def ingest_kafka_reviews(
     request: KafkaReviewIngestRequest,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> KafkaReviewIngestResponse:
+    require_permission(actor, "run", resource_label="Kafka review ingest")
     return etl_service.ingest_kafka_reviews(db, request)
 
 
@@ -143,15 +170,19 @@ def create_job(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(get_actor_context),
 ) -> CreatePipelineResponse:
-    return etl_service.create_pipeline(db, request, actor)
+    require_permission(actor, "manage", resource_label="job collection")
+    owned_request = request.model_copy(update={"created_by": actor.name})
+    return etl_service.create_pipeline(db, owned_request, actor)
 
 
-@router.get("/permission-options", response_model=PermissionOptionsResponse)
-def get_permission_options(
+@router.post("/sql-jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)
+def create_trino_sql_job(
+    request: CreateTrinoSqlJobRequest,
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(get_actor_context),
-) -> PermissionOptionsResponse:
-    return etl_service.get_permission_options(db, actor)
+) -> CreatePipelineResponse:
+    require_permission(actor, "manage", resource_label="job collection")
+    return etl_service.create_trino_sql_job(db, request, actor)
 
 
 @router.get("/jobs", response_model=JobListResponse)
@@ -173,6 +204,15 @@ def list_jobs(
     )
 
 
+@router.get("/jobs/statuses", response_model=JobStatusListResponse)
+def list_job_statuses(
+    job_ids: list[str] = Query(default_factory=list, alias="jobId"),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> JobStatusListResponse:
+    return etl_service.list_job_statuses(db, job_ids, actor)
+
+
 @router.get("/jobs/{job_id}", response_model=JobRowData)
 def get_job(
     job_id: str,
@@ -192,6 +232,15 @@ def update_job(
     return etl_service.update_pipeline(db, job_id, request, actor)
 
 
+@router.delete("/jobs/{job_id}", response_model=DeleteJobResponse)
+def delete_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> DeleteJobResponse:
+    return DeleteJobResponse(deletedJobId=etl_service.delete_job(db, job_id, actor))
+
+
 @router.post("/jobs/{job_id}/commands", response_model=JobCommandResponse)
 def command_job(
     job_id: str,
@@ -199,7 +248,14 @@ def command_job(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(get_actor_context),
 ) -> JobCommandResponse:
-    return etl_service.command_job(db, job_id, request.command, actor)
+    try:
+        response = etl_service.command_job(db, job_id, request.command, actor)
+    except ApiError as error:
+        metric = "job_command_duplicate_total" if error.status_code == status.HTTP_409_CONFLICT else "job_command_rejected_total"
+        increment_metric(metric, command=request.command, code=str(error.code))
+        raise
+    increment_metric("job_command_accepted_total", command=request.command)
+    return response
 
 
 @router.get("/jobs/{job_id}/continuous/logs", response_model=ContinuousWorkerLogsResponse)
@@ -279,6 +335,16 @@ def compact_continuous_target(
     actor: ActorContext = Depends(get_actor_context),
 ) -> ContinuousMaintenanceRun:
     return etl_service.compact_kafka_continuous_target(db, job_id, request, actor)
+
+
+@router.post("/jobs/{job_id}/continuous/iceberg-maintenance", response_model=ContinuousMaintenanceRun)
+def maintain_continuous_iceberg_target(
+    job_id: str,
+    request: ContinuousIcebergMaintenanceRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> ContinuousMaintenanceRun:
+    return etl_service.maintain_kafka_continuous_iceberg_target(db, job_id, request, actor)
 
 
 @router.post("/schedules/run-due", response_model=ScheduledJobRunResponse)

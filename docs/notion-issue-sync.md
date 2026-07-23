@@ -7,7 +7,7 @@ This repository mirrors GitHub Project issues for `JUNGLE-TEAM1/AskLake` into a 
 - Page: `302호 1팀 나만무 프로젝트`
 - Database: `AskLake 깃허브 이슈 (Project 4 연동)`
 - Database ID: `6df04edc16184687a6b698ff7becccdf`
-- Data source ID: `73e16bb0-ef44-4d52-b75c-b07c32fed7a1`
+- Data source ID: Git에 기록하지 않고 private `NOTION_DATA_SOURCE_ID` 환경변수로 전달한다.
 - Board view: `Kanban by Project Status`
 
 ## GitHub Project target

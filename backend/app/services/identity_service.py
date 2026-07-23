@@ -2,11 +2,15 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
+from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.permission_metadata import dedupe_grants
+from app.domain.audit import AuditTargetType
+from app.models.identity import AuthUserModel
 from app.repositories.audit_repository import list_audit_events, record_audit_event
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.dashboard_card_repository import list_dashboard_cards
@@ -21,10 +25,11 @@ from app.repositories.permission_repository import (
     create_permission_grant,
     delete_permission_grant,
     list_permission_grants_by_resource,
-    seed_permission_grants_if_empty,
+    ensure_demo_permission_grants,
     update_permission_grant,
 )
 from app.services.resource_permission_service import permissions_for_actor_with_governance
+from app.services.auth_service import AuthService
 from app.schemas.common import ErrorCode
 from app.schemas.identity import (
     AdminAuditLogsResponse,
@@ -100,15 +105,34 @@ class IdentityService:
 
     def list_admin_users(self, actor: ActorContext) -> AdminUsersResponse:
         self._require_admin(actor)
+        AuthService(self.db)
         users = [
-            self._admin_user_response(user_name)
-            for user_name in sorted(DEMO_USERS)
+            self._admin_user_response(user)
+            for user in self.db.scalars(
+                select(AuthUserModel).order_by(AuthUserModel.display_name.asc(), AuthUserModel.id.asc())
+            )
         ]
         return AdminUsersResponse(users=users)
 
     def list_admin_groups(self, actor: ActorContext) -> AdminGroupsResponse:
         self._require_admin(actor)
-        return AdminGroupsResponse(groups=list(DEMO_GROUPS.values()))
+        AuthService(self.db)
+        member_counts: dict[str, int] = {}
+        for user in self.db.scalars(select(AuthUserModel)):
+            for group_id in set(user.groups or []):
+                member_counts[group_id] = member_counts.get(group_id, 0) + 1
+        group_ids = set(member_counts)
+        if settings.allows_header_auth_fallback:
+            group_ids.update(DEMO_GROUPS)
+        return AdminGroupsResponse(groups=[
+            IdentityGroup(
+                id=group_id,
+                name=DEMO_GROUPS[group_id].name if group_id in DEMO_GROUPS else group_id,
+                description=DEMO_GROUPS[group_id].description if group_id in DEMO_GROUPS else None,
+                member_count=member_counts.get(group_id, 0),
+            )
+            for group_id in sorted(group_ids)
+        ])
 
     def list_admin_permissions(self, actor: ActorContext) -> AdminPermissionsResponse:
         self._require_admin(actor)
@@ -148,7 +172,7 @@ class IdentityService:
             },
             status_code=201,
             target_id=request.resource_id,
-            target_type=request.resource_type,
+            target_type=AuditTargetType(request.resource_type),
         )
         return self.list_admin_permissions(actor)
 
@@ -179,7 +203,7 @@ class IdentityService:
                 "principalType": grant.principal_type,
             },
             target_id=grant.resource_id,
-            target_type=grant.resource_type,
+            target_type=AuditTargetType(grant.resource_type),
         )
         return self.list_admin_permissions(actor)
 
@@ -203,7 +227,7 @@ class IdentityService:
                 "principalType": grant.principal_type,
             },
             target_id=grant.resource_id,
-            target_type=grant.resource_type,
+            target_type=AuditTargetType(grant.resource_type),
         )
         return self.list_admin_permissions(actor)
 
@@ -247,7 +271,7 @@ class IdentityService:
                 "status": row.status,
             },
             target_id=row.principal_id,
-            target_type=row.principal_type,
+            target_type=AuditTargetType(row.principal_type),
         )
         return self.list_admin_governance_controls(actor)
 
@@ -279,7 +303,7 @@ class IdentityService:
                 "resourceType": row.resource_type,
             },
             target_id=row.resource_id,
-            target_type=row.resource_type,
+            target_type=AuditTargetType(row.resource_type),
         )
         return self.list_admin_governance_controls(actor)
 
@@ -308,7 +332,7 @@ class IdentityService:
         from_at: datetime | None = None,
         limit: int = 100,
         query: str | None = None,
-        resource_type: str | None = None,
+        resource_type: AuditTargetType | None = None,
         result: str | None = None,
         to_at: datetime | None = None,
     ) -> AdminAuditLogsResponse:
@@ -361,26 +385,34 @@ class IdentityService:
             permissions_summary=summary,
         )
 
-    def _admin_user_response(self, user_name: str) -> AdminUser:
-        user = self._user_record(user_name)
+    def _admin_user_response(self, user: AuthUserModel) -> AdminUser:
         user_actor = ActorContext(
-            name=user_name,
-            role=str(user["role"]),
-            groups=tuple(str(group_id) for group_id in user["groups"]),
+            id=user.id,
+            email=user.email,
+            name=user.display_name,
+            role=user.role,
+            groups=tuple(str(group_id) for group_id in user.groups or []),
+            title=user.title,
         )
+        user_payload = {
+            "display_name": user.display_name,
+            "email": user.email,
+            "groups": list(user.groups or []),
+            "title": user.title,
+        }
         current = CurrentUserResponse(
-            id=str(user["id"]),
-            display_name=str(user["display_name"]),
-            email=str(user["email"]),
-            role=str(user["role"]),
-            groups=self._groups_for_user(user["groups"]),
-            profile=self._profile_for_user(user),
+            id=user.id,
+            display_name=user.display_name,
+            email=user.email,
+            role=user.role,
+            groups=self._groups_for_user(list(user.groups or [])),
+            profile=self._profile_for_user(user_payload),
             permissions_summary=self._permission_summary(user_actor),
         )
         return AdminUser(
             **current.model_dump(),
-            status="active",
-            last_active_at=str(user.get("last_active_at") or ""),
+            status=user.status if user.status in {"active", "invited", "disabled"} else "disabled",
+            last_active_at=user.last_active_at.isoformat() if user.last_active_at else None,
         )
 
     def _user_record(
@@ -542,8 +574,10 @@ class IdentityService:
         return summaries
 
     def _ensure_permission_grants_seeded(self) -> None:
+        if not settings.allows_header_auth_fallback:
+            return
         repository = CatalogRepository(self.db)
-        seed_permission_grants_if_empty(
+        ensure_demo_permission_grants(
             self.db,
             dataset_ids=[model.id for model in repository.list_dataset_models()],
             job_ids=[job.id for job in list_jobs(self.db)],

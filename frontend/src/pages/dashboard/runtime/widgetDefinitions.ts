@@ -56,7 +56,7 @@ export const dashboardWidgetDefinitions: Record<DashboardRuntimeWidgetType, Dash
     aiHints: {
       avoidWhen: ["many overlapping series", "unordered categories"],
       goodFor: ["trend", "volume", "cumulative amount"],
-      promptExamples: ["월별 매출 규모를 면적으로 보여줘", "일자별 주문량 변화를 강조해줘"],
+      promptExamples: ["시간별 클릭 수를 면적으로 보여줘", "일자별 주문량 변화를 강조해줘"],
     },
     colorMode: "series",
     columnRequirements: [
@@ -77,8 +77,8 @@ export const dashboardWidgetDefinitions: Record<DashboardRuntimeWidgetType, Dash
     },
     colorMode: "series",
     columnRequirements: [
-      { helperText: "비교 기준이 되는 카테고리 컬럼입니다.", kind: "dimension", label: "X축", required: true, role: "x" },
-      { helperText: "막대 길이로 표시할 숫자 컬럼입니다.", kind: "numeric", label: "Y축", required: true, role: "y" },
+      { helperText: "세로 막대의 X축, 가로 막대의 Y축에 표시할 분류 컬럼입니다.", kind: "dimension", label: "분류", required: true, role: "x" },
+      { helperText: "세로 막대의 Y축, 가로 막대의 X축에서 막대 길이를 계산할 숫자 컬럼입니다.", kind: "numeric", label: "값", required: true, role: "y" },
       { helperText: "막대를 그룹으로 나눌 때 사용합니다.", kind: "dimension", label: "그룹", required: false, role: "series" },
     ],
     defaultAggregation: "sum",
@@ -123,7 +123,7 @@ export const dashboardWidgetDefinitions: Record<DashboardRuntimeWidgetType, Dash
     aiHints: {
       avoidWhen: ["unordered categories", "part-to-whole ratio"],
       goodFor: ["trend", "time-series", "change"],
-      promptExamples: ["월별 매출 추이를 보여줘", "일자별 활성 사용자 변화를 보여줘"],
+      promptExamples: ["분 단위 클릭 수 추이를 보여줘", "시간별 활성 사용자 변화를 보여줘"],
     },
     colorMode: "series",
     columnRequirements: [

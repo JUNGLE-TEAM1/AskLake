@@ -1,0 +1,19 @@
+{{- if .Values.trino.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.trino.service.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: trino
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "asklake-workloads.selectorLabels" (dict "component" "trino" "release" .Release.Name) | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.trino.service.port }}
+      targetPort: https
+      protocol: TCP
+{{- end }}

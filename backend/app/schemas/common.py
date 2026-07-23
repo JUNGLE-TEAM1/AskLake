@@ -32,8 +32,21 @@ class ErrorCode(str, Enum):
     INVALID_JOB_STATE = "INVALID_JOB_STATE"
     SQL_SYNTAX_ERROR = "SQL_SYNTAX_ERROR"
     BACKEND_TIMEOUT = "BACKEND_TIMEOUT"
+    RATE_LIMITED = "RATE_LIMITED"
+    SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+    RESULT_EXPIRED = "RESULT_EXPIRED"
+    RESULT_PAGE_NOT_READY = "RESULT_PAGE_NOT_READY"
+    RESULT_PERSISTENCE_FAILED = "RESULT_PERSISTENCE_FAILED"
+    RESULT_STORAGE_UNAVAILABLE = "RESULT_STORAGE_UNAVAILABLE"
+    QUERY_CONFIRMATION_REQUIRED = "QUERY_CONFIRMATION_REQUIRED"
     NO_DRAFT_REVISION = "NO_DRAFT_REVISION"
+
+
+class DiagnosticFields(CamelModel):
+    operator_message: str | None = None
+    user_message: str | None = None
+    diagnostic_id: str | None = None
 
 
 class SortDirection(str, Enum):
@@ -41,10 +54,12 @@ class SortDirection(str, Enum):
     DESC = "desc"
 
 
-class ErrorDetail(CamelModel):
+class ErrorDetail(DiagnosticFields):
     code: ErrorCode | str
     message: str
     details: dict[str, Any] | None = None
+    stage: str = "api"
+    retryable: bool = False
 
 
 class ErrorResponse(CamelModel):

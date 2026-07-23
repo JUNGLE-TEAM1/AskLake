@@ -5,6 +5,7 @@ from fastapi import Cookie, Depends, Header
 from fastapi import status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ApiError
 from app.schemas.common import ErrorCode
@@ -14,7 +15,7 @@ from app.services.auth_service import SESSION_COOKIE_NAME, load_session_actor
 
 @dataclass(frozen=True)
 class ActorContext:
-    name: str = "demo-user"
+    name: str = "anonymous"
     role: str = "viewer"
     groups: tuple[str, ...] = field(default_factory=tuple)
     id: str | None = None
@@ -27,31 +28,64 @@ class ActorContext:
 
     @property
     def principal_ids(self) -> set[tuple[str, str]]:
-        principals = {("user", self.name), ("role", self.role)}
+        principals = {
+            ("user", value)
+            for value in (self.name, self.id, self.email)
+            if value
+        }
+        principals.add(("role", self.role))
         principals.update(("group", group) for group in self.groups)
         return {(kind, value) for kind, value in principals if value}
 
 
 def get_actor_context(
-    actor_name: Annotated[str, Header(alias="X-AskLake-User")] = "Admin User",
-    actor_role: Annotated[str, Header(alias="X-AskLake-Role")] = "admin",
+    actor_name: Annotated[str, Header(alias="X-AskLake-User")] = "anonymous",
+    actor_role: Annotated[str, Header(alias="X-AskLake-Role")] = "viewer",
     actor_groups: Annotated[str | None, Header(alias="X-AskLake-Groups")] = None,
     session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
     db: Annotated[Session, Depends(get_db)] = None,
 ) -> ActorContext:
+    return resolve_actor_context(
+        db=db,
+        session_token=session_token,
+        actor_name=actor_name,
+        actor_role=actor_role,
+        actor_groups=actor_groups,
+    )
+
+
+def resolve_actor_context(
+    *,
+    db: Session | None,
+    session_token: str | None,
+    actor_name: str = "Admin User",
+    actor_role: str = "admin",
+    actor_groups: str | None = None,
+) -> ActorContext:
+    """Resolve an actor without retaining a request-scoped DB session.
+
+    Long-lived streaming endpoints call this helper with a short-lived session
+    before returning their StreamingResponse.
+    """
     if session_token and db is not None:
         session_actor = load_session_actor(db, session_token)
         if session_actor is not None:
             return ActorContext(
-                name=str(session_actor.get("name") or "demo-user"),
+                name=str(session_actor.get("name") or session_actor.get("email") or session_actor.get("id") or "authenticated-user"),
                 role=str(session_actor.get("role") or "viewer"),
                 groups=tuple(str(group) for group in session_actor.get("groups") or []),
                 id=str(session_actor.get("id") or "") or None,
                 email=str(session_actor.get("email") or "") or None,
                 title=str(session_actor.get("title") or "") or None,
             )
+    if not settings.allows_header_auth_fallback:
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED,
+            "A valid AskLake session is required.",
+            status.HTTP_401_UNAUTHORIZED,
+        )
     return ActorContext(
-        name=(actor_name or "").strip() or "demo-user",
+        name=(actor_name or "").strip() or "anonymous",
         role=(actor_role or "").strip() or "viewer",
         groups=tuple(
             group.strip()
@@ -151,13 +185,15 @@ def permissions_for_actor(
     can_manage = can(actor, "manage", owner=owner, grants=grant_payload_list)
     can_delete = can(actor, "delete", owner=owner, grants=grant_payload_list)
     can_share = can(actor, "share", owner=owner, grants=grant_payload_list)
+    can_publish = can(actor, "publish", owner=owner, grants=grant_payload_list)
     return ResourcePermissions(
-        can_view=can_view or can_query or can_run or can_manage or can_delete or can_share,
+        can_view=can_view or can_query or can_run or can_manage or can_delete or can_share or can_publish,
         can_query=can_query,
         can_run=can_run,
         can_manage=can_manage,
         can_delete=can_delete,
         can_share=can_share,
+        can_publish=can_publish,
         computed_for=actor.name,
         enforced=enforced,
     )

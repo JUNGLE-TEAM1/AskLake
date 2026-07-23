@@ -6,6 +6,48 @@ const { Pool } = pg;
 
 const SESSION_COOKIE_NAME = "asklake_session";
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const LEGACY_PBKDF2_ITERATIONS = 120_000;
+const PBKDF2_ITERATIONS = 600_000;
+const PASSWORD_HASH_SCHEME = "pbkdf2_sha256";
+export function authRuntimePolicy(environment = process.env) {
+  const appEnvironment = String(environment.APP_ENV || "local").trim().toLowerCase();
+  const allowsDevelopmentAuth = ["local", "development", "dev", "test", "testing"].includes(appEnvironment);
+  return {
+    allowsDemoUsers: allowsDevelopmentAuth,
+    allowsMemoryFallback: allowsDevelopmentAuth
+      && String(environment.ASKLAKE_AUTH_MEMORY_FALLBACK || "true").trim().toLowerCase() !== "false",
+    allowsPublicSignup: allowsDevelopmentAuth
+      || String(environment.AUTH_PUBLIC_SIGNUP_ENABLED || "false").trim().toLowerCase() === "true",
+    secureCookies: !allowsDevelopmentAuth,
+  };
+}
+
+export function bootstrapAdminConfig(environment = process.env) {
+  const email = normalizeEmail(environment.BOOTSTRAP_ADMIN_EMAIL);
+  const password = String(environment.BOOTSTRAP_ADMIN_PASSWORD || "");
+  const displayName = String(environment.BOOTSTRAP_ADMIN_DISPLAY_NAME || "AskLake Administrator").trim();
+  const placeholders = new Set([
+    "admin.user@asklake.local",
+    "demo.user@asklake.local",
+    "asklake-admin",
+    "asklake-demo",
+    "replace-with-admin-email@example.invalid",
+    "replace-with-a-unique-bootstrap-password",
+  ]);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    throw new Error("BOOTSTRAP_ADMIN_EMAIL must be a valid administrator email address.");
+  }
+  if (password.length < 16) {
+    throw new Error("BOOTSTRAP_ADMIN_PASSWORD must contain at least 16 characters.");
+  }
+  if (placeholders.has(email) || placeholders.has(password.toLowerCase())) {
+    throw new Error("Replace the production bootstrap administrator placeholders before startup.");
+  }
+  return { displayName, email, password };
+}
+
+const runtimePolicy = authRuntimePolicy();
+const allowsPublicSignup = runtimePolicy.allowsPublicSignup;
 
 const DEMO_USERS = [
   {
@@ -126,9 +168,13 @@ async function ensureAuthSchema() {
         CREATE INDEX IF NOT EXISTS auth_sessions_user_id_idx ON auth_sessions (user_id);
         CREATE INDEX IF NOT EXISTS auth_sessions_expires_at_idx ON auth_sessions (expires_at);
       `);
-      await ensureDemoUsers();
+      if (runtimePolicy.allowsDemoUsers) {
+        await ensureDemoUsers();
+      } else {
+        await ensureBootstrapAdmin();
+      }
     })().catch((error) => {
-      if (process.env.ASKLAKE_AUTH_MEMORY_FALLBACK === "false") throw error;
+      if (!runtimePolicy.allowsMemoryFallback) throw error;
       useMemoryAuth = true;
       seedMemoryDemoUsers();
       console.warn(`AskLake auth DB unavailable; using in-memory auth store. ${error.message}`);
@@ -138,6 +184,9 @@ async function ensureAuthSchema() {
 }
 
 async function ensureDemoUsers() {
+  if (!runtimePolicy.allowsDemoUsers) {
+    throw new Error("Demo authentication is disabled outside local development.");
+  }
   if (useMemoryAuth) {
     seedMemoryDemoUsers();
     return;
@@ -156,8 +205,34 @@ async function ensureDemoUsers() {
   }
 }
 
+async function ensureBootstrapAdmin() {
+  const bootstrap = bootstrapAdminConfig();
+  const existing = await pool.query(
+    "SELECT * FROM auth_users WHERE id = $1 OR email = $2 LIMIT 1",
+    ["bootstrap-admin", bootstrap.email],
+  );
+  if (existing.rowCount > 0) {
+    const user = existing.rows[0];
+    if (user.email !== bootstrap.email || user.role !== "admin" || user.status !== "active") {
+      throw new Error("Configured bootstrap identity exists but is not the active administrator.");
+    }
+    return;
+  }
+  const salt = crypto.randomBytes(16).toString("hex");
+  await pool.query(
+    `
+      INSERT INTO auth_users (id, email, display_name, role, groups, password_hash, password_salt, status, title)
+      VALUES ('bootstrap-admin', $1, $2, 'admin', '[]'::jsonb, $3, $4, 'active', 'Platform Administrator')
+    `,
+    [bootstrap.email, bootstrap.displayName, hashPassword(bootstrap.password, salt), salt],
+  );
+}
+
 async function signup(body) {
   await ensureAuthSchema();
+  if (!allowsPublicSignup) {
+    throw apiError("FORBIDDEN", "Public account signup is disabled. Contact an AskLake administrator.", 403);
+  }
   const email = normalizeEmail(requiredString(body.email, "Email is required."));
   const password = requiredString(body.password, "Password is required.");
   const displayName = requiredString(body.displayName || body.display_name || email.split("@")[0], "Display name is required.").trim();
@@ -213,6 +288,15 @@ async function login(body) {
   }
   if (user.status !== "active") {
     throw apiError("AUTH_INACTIVE_USER", "비활성화된 계정입니다.", 403);
+  }
+  if (passwordNeedsRehash(user.password_hash)) {
+    user.password_hash = hashPassword(password, user.password_salt);
+    if (!useMemoryAuth) {
+      await pool.query(
+        "UPDATE auth_users SET password_hash = $1, updated_at = now() WHERE id = $2",
+        [user.password_hash, user.id],
+      );
+    }
   }
   if (useMemoryAuth) {
     user.last_active_at = new Date();
@@ -322,6 +406,9 @@ function toCurrentUser(actor) {
 }
 
 function seedMemoryDemoUsers() {
+  if (!runtimePolicy.allowsDemoUsers) {
+    throw new Error("In-memory demo authentication is disabled outside local development.");
+  }
   for (const user of DEMO_USERS) {
     const email = normalizeEmail(user.email);
     if (memoryAuth.usersByEmail.has(email)) continue;
@@ -346,7 +433,8 @@ function writeMemoryUser(user) {
 }
 
 function setSessionCookie(response, token) {
-  response.setHeader("Set-Cookie", `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}`);
+  const secure = runtimePolicy.secureCookies ? "; Secure" : "";
+  response.setHeader("Set-Cookie", `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}${secure}`);
 }
 
 function clearSessionCookie(response) {
@@ -367,12 +455,32 @@ function parseCookies(cookieHeader) {
   }, {});
 }
 
-function hashPassword(password, salt) {
-  return crypto.pbkdf2Sync(password, salt, 120_000, 32, "sha256").toString("hex");
+export function hashPassword(password, salt) {
+  const digest = crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, 32, "sha256").toString("hex");
+  return `${PASSWORD_HASH_SCHEME}$${PBKDF2_ITERATIONS}$${digest}`;
 }
 
-function verifyPassword(password, salt, expectedHash) {
-  return crypto.timingSafeEqual(Buffer.from(hashPassword(password, salt), "hex"), Buffer.from(expectedHash, "hex"));
+export function verifyPassword(password, salt, expectedHash) {
+  const { digest, iterations } = passwordHashParts(expectedHash);
+  const actual = crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256");
+  const expected = Buffer.from(digest, "hex");
+  return expected.length === actual.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function passwordHashParts(value) {
+  const parts = String(value || "").split("$", 3);
+  if (parts.length === 3 && parts[0] === PASSWORD_HASH_SCHEME) {
+    const iterations = Number(parts[1]);
+    if (Number.isSafeInteger(iterations) && iterations > 0 && iterations <= PBKDF2_ITERATIONS * 2 && parts[2]) {
+      return { digest: parts[2], iterations };
+    }
+  }
+  return { digest: String(value || ""), iterations: LEGACY_PBKDF2_ITERATIONS };
+}
+
+function passwordNeedsRehash(value) {
+  const { iterations } = passwordHashParts(value);
+  return !String(value || "").startsWith(`${PASSWORD_HASH_SCHEME}$`) || iterations < PBKDF2_ITERATIONS;
 }
 
 function normalizeEmail(email) {

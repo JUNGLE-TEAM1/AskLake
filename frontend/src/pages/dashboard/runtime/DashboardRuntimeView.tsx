@@ -7,6 +7,7 @@ import type {
   DashboardRuntimeResponse,
   DashboardRuntimeWidget,
 } from "../../../types";
+import type { DashboardAutoRefreshStatus } from "./dashboardAutoRefresh";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
@@ -38,6 +39,9 @@ type VisualizationPromptInsertion = {
 };
 
 type DashboardRuntimeState = {
+  autoRefreshEnabled: boolean;
+  autoRefreshError: string | null;
+  autoRefreshStatus: DashboardAutoRefreshStatus;
   canRedoLayout: boolean;
   canUndoLayout: boolean;
   deletingWidgetId: string | null;
@@ -83,7 +87,7 @@ type DashboardRuntimeViewActions = {
   clearWidgetScrollTarget: () => void;
   clearWidgetSelection: () => void;
   closeSharePanel: () => void;
-  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<boolean>;
   createToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   deletePage: (pageId: string) => void;
   deleteWidget: (widgetId: string) => void;
@@ -99,14 +103,16 @@ type DashboardRuntimeViewActions = {
   renameTitle: (title: string) => Promise<void> | void;
   retryDraft: () => void;
   retryPublished: () => void;
+  retryWidgetData: (widgetId: string) => void;
   selectDataset: (datasetId: string) => void;
   selectWidgetDataset: (datasetId: string) => void;
   selectPage: (pageId: string) => void;
   selectWidget: (widgetId: string) => void;
+  setAutoRefreshEnabled: (enabled: boolean) => void;
   share: () => void;
   toggleDatasetSidebar: () => void;
   undoLayout: () => void;
-  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
+  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
 };
 
 type DashboardRuntimeViewProps = {
@@ -136,20 +142,51 @@ const emptyDashboardCopy = {
   title: "게시된 위젯이 없습니다",
 };
 
-export function DashboardRuntimeView({
-  actions,
-  datasets,
-  runtime,
-}: DashboardRuntimeViewProps) {
+function PublishedDashboardWidgetGrid({
+  onRetryData,
+  widgets,
+}: {
+  onRetryData: (widgetId: string) => void;
+  widgets: DashboardRuntimeWidget[];
+}) {
+  return (
+    <div className="asklake-dashboard-widget-grid" aria-label="Published dashboard widgets">
+      {widgets.map((widget) => (
+        <WidgetFrame key={widget.id} widget={widget} onRetryData={onRetryData} />
+      ))}
+    </div>
+  );
+}
+
+function RuntimeActionButton({
+  onClick,
+  primary = false,
+}: {
+  onClick: () => void;
+  primary?: boolean;
+}) {
+  return (
+    <Button type="button" variant={primary ? undefined : "outline"} onClick={onClick}>
+      {primary ? "위젯 편집" : "다시 시도"}
+    </Button>
+  );
+}
+
+export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRuntimeViewProps) {
   const assistantPromptInsertionIdRef = useRef(0);
   const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
   const visualizationPromptInsertionIdRef = useRef(0);
   const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
+  const [assistantSelectedDatasetIds, setAssistantDatasetIds] = useState<string[]>([]);
   const [visualizationPromptInsertion, setVisualizationPromptInsertion] = useState<VisualizationPromptInsertion | null>(null);
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
   const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
+  const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const {
+    autoRefreshEnabled,
+    autoRefreshError,
+    autoRefreshStatus,
     canRedoLayout,
     canUndoLayout,
     deletingWidgetId,
@@ -209,6 +246,7 @@ export function DashboardRuntimeView({
     renameTitle: onRenameTitle,
     retryDraft: onRetryDraft,
     retryPublished: onRetryPublished,
+    retryWidgetData: onRetryWidgetData,
     selectDataset: onSelectDataset,
     selectWidgetDataset: onSelectWidgetDataset,
     selectPage: onSelectPage,
@@ -218,23 +256,21 @@ export function DashboardRuntimeView({
     undoLayout: onUndoLayout,
     updateWidget: onUpdateWidget,
   } = actions;
+  const assistantDatasetIds = assistantSelectedDatasetIds;
+  useEffect(() => {
+    const availableIds = new Set(dashboardDatasets.map((dataset) => dataset.id));
+    setAssistantDatasetIds((current) => {
+      const next = current.filter((datasetId) => availableIds.has(datasetId));
+      return next.length === current.length ? current : next;
+    });
+  }, [dashboardDatasets]);
+  useEffect(() => {
+    setAssistantDatasetIds([]);
+  }, [draftRuntime?.dashboard.id]);
   const isDraftMode = mode === "draft";
-  const openDraftAction = (
-    <Button type="button" onClick={onOpenDraft}>
-      위젯 편집
-    </Button>
-  );
-  const retryAction = (
-    <Button type="button" variant="outline" onClick={onRetryPublished}>
-      다시 시도
-    </Button>
-  );
-  const draftRetryAction = (
-    <Button type="button" variant="outline" onClick={onRetryDraft}>
-      다시 시도
-    </Button>
-  );
-
+  const openDraftAction = <RuntimeActionButton onClick={onOpenDraft} primary />;
+  const retryAction = <RuntimeActionButton onClick={onRetryPublished} />;
+  const draftRetryAction = <RuntimeActionButton onClick={onRetryDraft} />;
   const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => onUpdateWidget(widget.id, {
     config: {
       ...widget.config,
@@ -246,10 +282,13 @@ export function DashboardRuntimeView({
   });
   const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
     const convertsVisualizationRequest = widget.config.placeholderKind === "visualization_request" && (patch.datasetId || patch.type);
-    const nextConfig = {
-      ...widget.config,
-      ...(patch.config ?? {}),
-    } as Record<string, unknown>;
+    const changesWidgetType = patch.type !== undefined && patch.type !== widget.type;
+    const nextConfig = (changesWidgetType
+      ? { ...(patch.config ?? {}) }
+      : {
+          ...widget.config,
+          ...(patch.config ?? {}),
+        }) as Record<string, unknown>;
 
     if (convertsVisualizationRequest) {
       delete nextConfig.placeholderKind;
@@ -276,7 +315,10 @@ export function DashboardRuntimeView({
     });
   };
   const assistantContext = {
-    activeDatasetId: selectedDatasetId,
+    activeDatasetId: inspectorMode === "assistant"
+      ? assistantDatasetIds[0] ?? null
+      : selectedDatasetId,
+    selectedDatasetIds: assistantDatasetIds,
     dashboardId: draftRuntime?.dashboard.id ?? title,
     onWorkingWidgetChange: setAiWorkingWidgetId,
     pageId: selectedPageId,
@@ -315,7 +357,7 @@ export function DashboardRuntimeView({
       const widget = selectedDraftWidgets.find((item) => item.id === widgetId);
       if (widget) queueAssistantPromptText(`선택한 위젯 "${widget.title || "제목 없는 위젯"}"에 대해`);
     }
-    if (inspectorMode !== "assistant") setInspectorMode("widget");
+    if (inspectorMode !== "assistant") { setInspectorMode("widget"); setIsInspectorOpen(true); }
     onSelectWidget(widgetId);
   };
   const handleSelectWidgetColorSlot = (widgetId: string, slotIndex: number) => {
@@ -326,37 +368,54 @@ export function DashboardRuntimeView({
     }
 
     setInspectorMode("widget");
+    setIsInspectorOpen(true);
     setFocusedColorSlot({ slotIndex, widgetId });
     if (selectedWidgetId !== widgetId) onSelectWidget(widgetId);
   };
   const handleCreateToolbarWidget = async (kind: ToolbarDraftWidgetKind) => {
     setInspectorMode("widget");
+    setIsInspectorOpen(true);
     await onCreateToolbarWidget(kind);
   };
   const handleSelectDataset = (datasetId: string) => {
-    onSelectDataset(datasetId);
     const dataset = dashboardDatasets.find((item) => item.id === datasetId);
     if (!dataset) return;
 
     if (inspectorMode === "assistant") {
-      queueAssistantPromptText(dataset.name);
+      const wasSelected = assistantDatasetIds.includes(datasetId);
+      setAssistantDatasetIds((current) => (
+        current.includes(datasetId)
+          ? current.filter((id) => id !== datasetId)
+          : [...current, datasetId]
+      ));
+      if (!wasSelected) {
+        onSelectDataset(datasetId);
+        queueAssistantPromptText(dataset.name);
+      }
       return;
     }
 
+    onSelectDataset(datasetId);
+    setIsInspectorOpen(true);
     queueVisualizationPromptText(dataset.name);
   };
   const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
     if (inspectorMode === "assistant") {
+      setAssistantDatasetIds((current) => (
+        current.includes(dataset.id) ? current : [...current, dataset.id]
+      ));
       queueAssistantPromptText(column.name);
       onSelectDataset(dataset.id);
       return;
     }
 
+    setIsInspectorOpen(true);
     queueVisualizationPromptText(column.name);
     onSelectDataset(dataset.id);
   };
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
   const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";
+  const isInspectorAvailable = isAssistantInspectorOpen || (isDraftMode && !selectedWidgetHidesInspector);
   const configurableDraftWidget = selectedWidgetHidesInspector ? null : selectedDraftWidget;
 
   useEffect(() => {
@@ -410,6 +469,7 @@ export function DashboardRuntimeView({
         onLayoutCommit={onLayoutCommit}
         onLayoutRejected={onLayoutRejected}
         onPatchWidgetConfig={patchWidgetConfig}
+        onRetryWidgetData={onRetryWidgetData}
         onScrollTargetHandled={onClearWidgetScrollTarget}
         onSelectWidget={handleSelectWidget}
         onSelectWidgetColorSlot={handleSelectWidgetColorSlot}
@@ -445,9 +505,7 @@ export function DashboardRuntimeView({
       <EmptyDashboardCanvas action={openDraftAction} editable={false} {...emptyDashboardCopy} />
     </div>
   ) : (
-    <div className="asklake-dashboard-widget-grid" aria-label="Published dashboard widgets">
-      {selectedPublishedWidgets.map((widget) => <WidgetFrame key={widget.id} widget={widget} />)}
-    </div>
+    <PublishedDashboardWidgetGrid widgets={selectedPublishedWidgets} onRetryData={onRetryWidgetData} />
   );
 
   const canShowEditToolbar = isDraftMode && Boolean(draftRuntime?.revision) && !draftLoading && !draftError;
@@ -463,31 +521,37 @@ export function DashboardRuntimeView({
             isLoading={dashboardDatasetsLoading}
             onClose={onToggleDatasetSidebar}
             selectedDatasetId={selectedDatasetId}
+            selectedDatasetIds={inspectorMode === "assistant" ? assistantDatasetIds : undefined}
             onSelectColumn={handleSelectDatasetColumn}
             onSelectDataset={handleSelectDataset}
           />
         ) : undefined}
         datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
+        autoRefreshEnabled={autoRefreshEnabled}
+        autoRefreshError={autoRefreshError}
+        autoRefreshStatus={autoRefreshStatus}
         hasPublishedRevision={hasPublishedRevision}
         isAddingPage={isAddingPage}
         isPublishing={isPublishing}
         isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
-        inspector={isAssistantInspectorOpen ? (
-          <aside className="asklake-dashboard-inspector assistant">
+        inspector={isInspectorAvailable && isInspectorOpen && isAssistantInspectorOpen ? (
+          <aside className="asklake-dashboard-inspector assistant" id="asklake-dashboard-inspector">
             <DashboardAssistantPanel
+              currentDatasetId={assistantContext.activeDatasetId}
               dashboardId={assistantContext.dashboardId}
               datasets={dashboardDatasets}
               pageId={selectedPageId}
               promptInsertion={assistantPromptInsertion}
+              selectedDatasetIds={assistantContext.selectedDatasetIds}
               selectedWidget={selectedDraftWidget}
               widgets={selectedDraftWidgets}
               onCreateWidget={onCreateDatasetWidget}
               onUpdateWidget={onUpdateWidget}
             />
           </aside>
-        ) : isDraftMode && !selectedWidgetHidesInspector ? (
-          <aside className="asklake-dashboard-inspector">
+        ) : isInspectorAvailable && isInspectorOpen ? (
+          <aside className="asklake-dashboard-inspector" id="asklake-dashboard-inspector">
             <WidgetConfigPanel
               datasets={dashboardDatasets}
               editingWidget={configurableDraftWidget}
@@ -503,6 +567,7 @@ export function DashboardRuntimeView({
             />
           </aside>
         ) : undefined}
+        inspectorOpen={isInspectorAvailable && isInspectorOpen}
         mode={mode}
         notice={notice}
         pages={pages}
@@ -517,11 +582,13 @@ export function DashboardRuntimeView({
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
+        onAutoRefreshChange={actions.setAutoRefreshEnabled}
         onRenamePage={isDraftMode ? onRenamePage : undefined}
         onRenameTitle={isDraftMode ? onRenameTitle : undefined}
         onSelectPage={onSelectPage}
         onShare={onShare}
         onToggleDatasetSidebar={isDraftMode ? onToggleDatasetSidebar : undefined}
+        onToggleInspector={isInspectorAvailable ? () => setIsInspectorOpen((open) => !open) : undefined}
       >
         {canShowEditToolbar ? (
           <div className="asklake-dashboard-edit-stage">
@@ -531,7 +598,10 @@ export function DashboardRuntimeView({
               canRedo={canRedoLayout}
               canUndo={canUndoLayout}
               disabled={isCreatingToolbarWidget || !selectedPageId}
-              onAssistant={() => setInspectorMode("assistant")}
+              onAssistant={() => {
+                setInspectorMode("assistant");
+                setIsInspectorOpen(true);
+              }}
               onCursor={handleCursorMode}
               onCreateToolbarWidget={handleCreateToolbarWidget}
               onRedo={onRedoLayout}

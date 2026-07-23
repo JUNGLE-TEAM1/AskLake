@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "environment": "production",
+  "contractOwner": "data-platform",
+  "reviewBy": "2026-10-31",
+  "requiredPlatforms": [
+    "eks"
+  ],
+  "requiredControlPlanes": [
+    {
+      "id": "kafka-continuous-runtime-sync",
+      "ownerPolicy": "exactly-one",
+      "entrypoints": [
+        "backend/app/continuous_worker.py::sync_active_kafka_continuous_runtimes"
+      ]
+    },
+    {
+      "id": "continuous-sql-runtime-sync",
+      "ownerPolicy": "exactly-one",
+      "entrypoints": [
+        "backend/app/continuous_worker.py::sync_active_continuous_sql_jobs"
+      ]
+    }
+  ],
+  "workloads": [
+    {
+      "id": "eks-web-finite-batch",
+      "platform": "eks",
+      "deploymentCell": "production-eks",
+      "active": true,
+      "responsibilities": [
+        "web-api",
+        "finite-batch"
+      ],
+      "ownsControlPlanes": [],
+      "evidence": [
+        {
+          "kind": "operator-declared",
+          "reference": "current deployed EKS web and finite-batch baseline"
+        }
+      ]
+    },
+    {
+      "id": "ec2-continuous-worker",
+      "platform": "ec2-compose",
+      "deploymentCell": "production-ec2-compose",
+      "active": false,
+      "responsibilities": [
+        "rollback-standby",
+        "optional-ec2-clickhouse-v2-profile"
+      ],
+      "ownsControlPlanes": [],
+      "evidence": [
+        {
+          "kind": "repository",
+          "reference": "deploy/docker-compose.prod.yml::continuous-worker:"
+        },
+        {
+          "kind": "repository",
+          "reference": "backend/app/continuous_worker.py::run_forever"
+        }
+      ]
+    },
+    {
+      "id": "eks-realtime-v1-worker",
+      "platform": "eks",
+      "deploymentCell": "production-eks-realtime-v1",
+      "active": true,
+      "responsibilities": [
+        "kafka-continuous-control-plane",
+        "continuous-sql-control-plane",
+        "iceberg-gold-publication",
+        "spark-structured-streaming"
+      ],
+      "ownsControlPlanes": [
+        "kafka-continuous-runtime-sync",
+        "continuous-sql-runtime-sync"
+      ],
+      "evidence": [
+        {
+          "kind": "repository",
+          "reference": "infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml::CONTINUOUS_WORKER_SCOPE"
+        }
+      ]
+    }
+  ]
+}

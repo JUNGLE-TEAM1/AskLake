@@ -1,14 +1,28 @@
 import { ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import { resolveObjectStorageConfig, s3ClientOptions } from "./objectStorageConfig.mjs";
 
 const DEFAULT_BUCKETS = ["asklake-output"];
 const MAX_PREFIX_LENGTH = 1024;
 
 function allowedBuckets() {
-  const configured = (process.env.S3_ALLOWED_BUCKETS || process.env.AWS_S3_ALLOWED_BUCKETS || "")
-    .split(",")
+  const configured = [
+    process.env.ASKLAKE_SPARK_OUTPUT_BUCKET,
+    process.env.S3_ALLOWED_BUCKETS,
+    process.env.AWS_S3_ALLOWED_BUCKETS,
+    process.env.ASKLAKE_S3_ALLOWED_BUCKETS,
+  ]
+    .flatMap((value) => String(value || "").split(","))
     .map((bucket) => bucket.trim())
     .filter(Boolean);
-  return configured.length > 0 ? configured : DEFAULT_BUCKETS;
+  const buckets = [...new Set(configured)];
+  if (buckets.length > 0) return buckets;
+  if (resolveObjectStorageConfig().provider === "aws") {
+    throw Object.assign(
+      new Error("S3 target browsing requires ASKLAKE_SPARK_OUTPUT_BUCKET or S3_ALLOWED_BUCKETS."),
+      { code: "SERVICE_UNAVAILABLE", status: 503 },
+    );
+  }
+  return DEFAULT_BUCKETS;
 }
 
 function normalizePrefix(prefix = "") {
@@ -41,12 +55,7 @@ function assertSafePrefix(prefix) {
 }
 
 function s3Client() {
-  const endpoint = process.env.S3_ENDPOINT || process.env.AWS_ENDPOINT_URL_S3;
-  return new S3Client({
-    endpoint,
-    forcePathStyle: endpoint ? String(process.env.S3_FORCE_PATH_STYLE ?? "true").toLowerCase() !== "false" : undefined,
-    region: process.env.S3_REGION || process.env.AWS_REGION || "us-east-1",
-  });
+  return new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
 }
 
 function folderNameFromPrefix(prefix) {
@@ -68,46 +77,6 @@ function toFile(key, currentPrefix) {
     name: key.slice(currentPrefix.length).split("/").filter(Boolean).at(-1) || key,
     type: "file",
   };
-}
-
-function fixtureFoldersForPrefix(prefix) {
-  const fixturePrefixes = [
-    "pair_a_customer_review_gold/",
-    "pair_a_customer_review_gold/gold/",
-    "pair_a_customer_review_gold/silver/",
-    "pair_a/",
-    "pair_a/customer_review_gold/",
-    "pair_a/customer_review_gold/gold/",
-    "sales/",
-    "sales/order_date=2026-07-07/",
-    "sales/order_date=2026-07-08/",
-  ];
-  const children = new Map();
-
-  fixturePrefixes.forEach((fixturePrefix) => {
-    if (!fixturePrefix.startsWith(prefix) || fixturePrefix === prefix) return;
-    const remainder = fixturePrefix.slice(prefix.length);
-    const [nextSegment] = remainder.split("/").filter(Boolean);
-    if (!nextSegment) return;
-    const childPrefix = `${prefix}${nextSegment}/`;
-    children.set(childPrefix, toFolder(childPrefix));
-  });
-
-  return Array.from(children.values());
-}
-
-function fixturePrefixResponse(bucket, prefix) {
-  return {
-    bucket,
-    files: [],
-    folders: fixtureFoldersForPrefix(prefix),
-    nextContinuationToken: null,
-    prefix,
-  };
-}
-
-function shouldUseFixtureFallback() {
-  return String(process.env.S3_DISABLE_FIXTURE_FALLBACK ?? "false").toLowerCase() !== "true";
 }
 
 export function listS3Buckets() {
@@ -139,10 +108,6 @@ export async function listS3Prefixes({ bucket, continuationToken, prefix }) {
       prefix: safePrefix,
     };
   } catch (error) {
-    if (shouldUseFixtureFallback()) {
-      return fixturePrefixResponse(allowedBucket, safePrefix);
-    }
-
     throw Object.assign(new Error(error.message || "S3 prefix list failed."), {
       code: "S3_LIST_FAILED",
       status: 502,

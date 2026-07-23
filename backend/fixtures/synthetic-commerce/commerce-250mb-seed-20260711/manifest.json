@@ -1,0 +1,278 @@
+{
+  "generator_version": 3,
+  "run_id": "commerce-250mb-seed-20260711",
+  "seed": 20260711,
+  "source_file": "meta_Electronics.jsonl",
+  "window": {
+    "start": "2026-06-01T00:00:00+09:00",
+    "end_exclusive": "2026-07-01T00:00:00+09:00"
+  },
+  "sizing": {
+    "mode": "target_total_size",
+    "requested_products": 10000,
+    "requested_users": null,
+    "target_total_size_mb": 250.0,
+    "max_file_size_mb": 64.0,
+    "resolved_products": 10000,
+    "resolved_users": 33702,
+    "actual_total_bytes": 262685445,
+    "actual_total_mib": 250.516362,
+    "target_size_error_pct": 0.207
+  },
+  "resolved_counts": {
+    "products": 10000,
+    "users": 33702,
+    "click_events": 849760,
+    "sessions": 215157
+  },
+  "counts": {
+    "products": 10000,
+    "users": 33702,
+    "event_count": 849760,
+    "session_count": 215157,
+    "event_type_counts": {
+      "product_impression": 599636,
+      "product_click": 202688,
+      "add_to_cart": 35371,
+      "purchase_click": 12065
+    },
+    "products_exposed": 10000,
+    "product_coverage_pct": 100.0
+  },
+  "product_selection": {
+    "source_rows_scanned": 1610012,
+    "invalid_json_rows": 0,
+    "selected_by_category": {
+      "Camera & Photo": 1250,
+      "Car & Vehicle Electronics": 1250,
+      "Computers & Accessories": 1250,
+      "Headphones, Earbuds & Accessories": 1250,
+      "Home Audio": 1250,
+      "Portable Audio & Video": 1250,
+      "Television & Video": 1250,
+      "Wearable Technology": 1250
+    },
+    "eligible_by_category": {
+      "Computers & Accessories": 155142,
+      "Camera & Photo": 67607,
+      "Television & Video": 35772,
+      "Headphones, Earbuds & Accessories": 25357,
+      "Home Audio": 20624,
+      "Car & Vehicle Electronics": 21763,
+      "Portable Audio & Video": 14593,
+      "Wearable Technology": 5177
+    },
+    "selection_rule": "balanced deterministic hash sample; valid price; rating_count >= 5"
+  },
+  "behavior_profile": {
+    "version": 1,
+    "category_purchase_intent": {
+      "applied_stage": "cart_to_purchase_click",
+      "categories": {
+        "Computers & Accessories": {
+          "group": "medium",
+          "multiplier": 1.0
+        },
+        "Camera & Photo": {
+          "group": "medium",
+          "multiplier": 1.0
+        },
+        "Television & Video": {
+          "group": "low",
+          "multiplier": 0.7
+        },
+        "Headphones, Earbuds & Accessories": {
+          "group": "high",
+          "multiplier": 1.3
+        },
+        "Home Audio": {
+          "group": "medium",
+          "multiplier": 1.0
+        },
+        "Car & Vehicle Electronics": {
+          "group": "low",
+          "multiplier": 0.7
+        },
+        "Portable Audio & Video": {
+          "group": "low",
+          "multiplier": 0.7
+        },
+        "Wearable Technology": {
+          "group": "high",
+          "multiplier": 1.3
+        }
+      }
+    },
+    "date_profiles": {
+      "weekend_campaign": {
+        "dates": [
+          "2026-06-06",
+          "2026-06-07"
+        ],
+        "multipliers": {
+          "traffic": 1.6,
+          "impression_to_click": 0.72,
+          "click_to_cart": 0.86,
+          "cart_to_purchase_click": 0.95
+        }
+      },
+      "payday_promotion": {
+        "dates": [
+          "2026-06-25"
+        ],
+        "multipliers": {
+          "traffic": 1.0,
+          "impression_to_click": 1.0,
+          "click_to_cart": 1.35,
+          "cart_to_purchase_click": 1.15
+        }
+      }
+    },
+    "thresholds": {
+      "category_adjacent_group_gap_pp": 1.0,
+      "category_max_min_gap_pp": 3.0,
+      "category_max_min_ratio": 1.5,
+      "minimum_clicks_per_category": 1000,
+      "minimum_purchase_clicks_per_category": 50,
+      "weekend_campaign_traffic_ratio": 1.2,
+      "weekend_campaign_ctr_drop_pp": 2.0,
+      "payday_traffic_tolerance_pct": 10.0,
+      "payday_click_to_cart_lift_pp": 3.0
+    }
+  },
+  "datasets": {
+    "meta": {
+      "format": "jsonl",
+      "prefix": "meta/",
+      "rows": 10000,
+      "bytes": 3128520,
+      "mib": 2.983589,
+      "file_count": 1,
+      "files": [
+        {
+          "path": "meta/part-00000.jsonl",
+          "rows": 10000,
+          "bytes": 3128520,
+          "sha256": "5bb480708e1b3118337019d95762678a52b0f719cdeaf7b0202ee4197794fc07"
+        }
+      ]
+    },
+    "users": {
+      "format": "jsonl",
+      "prefix": "users/",
+      "rows": 33702,
+      "bytes": 6539645,
+      "mib": 6.236691,
+      "file_count": 1,
+      "files": [
+        {
+          "path": "users/part-00000.jsonl",
+          "rows": 33702,
+          "bytes": 6539645,
+          "sha256": "6d851f6351181502097f4aa75d091b3ba2e25b60b03568fcd52b006917898939"
+        }
+      ]
+    },
+    "click_events": {
+      "format": "jsonl",
+      "prefix": "click_events/",
+      "rows": 849760,
+      "bytes": 253017280,
+      "mib": 241.296082,
+      "file_count": 4,
+      "files": [
+        {
+          "path": "click_events/part-00000.jsonl",
+          "rows": 225366,
+          "bytes": 67108763,
+          "sha256": "fe53379acadef1893194cc176aece1eee767d6aaeb5dfebf858a704b8ae78c80"
+        },
+        {
+          "path": "click_events/part-00001.jsonl",
+          "rows": 225344,
+          "bytes": 67108813,
+          "sha256": "538d7bdfe213038e82578de279728ffb0edcbff711d218281bd0d1782858c515"
+        },
+        {
+          "path": "click_events/part-00002.jsonl",
+          "rows": 225409,
+          "bytes": 67108771,
+          "sha256": "433ca68ce03f72a1c87e5799b15bf417b70944f3226127aa6e4346441ca4bd33"
+        },
+        {
+          "path": "click_events/part-00003.jsonl",
+          "rows": 173641,
+          "bytes": 51690933,
+          "sha256": "cb1d2e606f3c2164ee2f830b05a552ac7fae0d0c27a9a52ca033ff0d40b036d5"
+        }
+      ]
+    }
+  },
+  "files": [
+    {
+      "path": "meta/part-00000.jsonl",
+      "rows": 10000,
+      "bytes": 3128520,
+      "sha256": "5bb480708e1b3118337019d95762678a52b0f719cdeaf7b0202ee4197794fc07"
+    },
+    {
+      "path": "users/part-00000.jsonl",
+      "rows": 33702,
+      "bytes": 6539645,
+      "sha256": "6d851f6351181502097f4aa75d091b3ba2e25b60b03568fcd52b006917898939"
+    },
+    {
+      "path": "click_events/part-00000.jsonl",
+      "rows": 225366,
+      "bytes": 67108763,
+      "sha256": "fe53379acadef1893194cc176aece1eee767d6aaeb5dfebf858a704b8ae78c80"
+    },
+    {
+      "path": "click_events/part-00001.jsonl",
+      "rows": 225344,
+      "bytes": 67108813,
+      "sha256": "538d7bdfe213038e82578de279728ffb0edcbff711d218281bd0d1782858c515"
+    },
+    {
+      "path": "click_events/part-00002.jsonl",
+      "rows": 225409,
+      "bytes": 67108771,
+      "sha256": "433ca68ce03f72a1c87e5799b15bf417b70944f3226127aa6e4346441ca4bd33"
+    },
+    {
+      "path": "click_events/part-00003.jsonl",
+      "rows": 173641,
+      "bytes": 51690933,
+      "sha256": "cb1d2e606f3c2164ee2f830b05a552ac7fae0d0c27a9a52ca033ff0d40b036d5"
+    }
+  ],
+  "total_bytes": 262685445,
+  "total_mib": 250.516362,
+  "public_user_columns": [
+    "user_id",
+    "age",
+    "gender",
+    "region",
+    "signup_at",
+    "acquisition_channel",
+    "membership_tier",
+    "primary_device"
+  ],
+  "hidden_generation_traits": [
+    "activity_tier",
+    "price_sensitivity",
+    "purchase_propensity",
+    "category_affinity"
+  ],
+  "planted_patterns": [
+    "age 18-34 favors headphones, wearables, and computers",
+    "age 45+ favors television/video and home audio",
+    "referral users have higher cart and purchase-click propensity than paid-search users",
+    "premium/vip users have higher funnel progression than basic users",
+    "mobile sessions concentrate in local evening hours",
+    "gender and region have no direct behavior multiplier and act as null controls",
+    "category purchase-click propensity follows high, medium, and low groups",
+    "the first weekend campaign increases traffic while lowering CTR",
+    "the payday promotion keeps traffic near normal while increasing click-to-cart progression"
+  ]
+}

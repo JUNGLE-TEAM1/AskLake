@@ -61,6 +61,101 @@ export function projectKafkaTargetRecord(record, schemaColumns) {
   return projected;
 }
 
+export function parseKafkaSnapshotRecord(value, context = {}, schemaColumns = [], recordParsing = null) {
+  if (recordParsing?.enabled) {
+    return parseRawTextRecord(value, context, recordParsing);
+  }
+  try {
+    const record = JSON.parse(value);
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      return invalidRecord(context, value, "invalid_json_object");
+    }
+    if (!usesLegacyReviewContract(schemaColumns)) return { record, valid: true };
+
+    for (const field of ["event_id", "offset", "review", "created_at"]) {
+      if (record[field] === undefined || record[field] === null || record[field] === "") {
+        return invalidRecord(context, value, "missing_required_field", { field });
+      }
+    }
+    if (record.schema_version !== undefined && record.schema_version !== "1.0") {
+      return invalidRecord(context, value, "unsupported_schema_version", { schemaVersion: record.schema_version });
+    }
+    if (record.raw !== undefined && (typeof record.raw !== "object" || Array.isArray(record.raw))) {
+      return invalidRecord(context, value, "invalid_raw_payload");
+    }
+    const numericOffset = Number(record.offset);
+    if (!Number.isFinite(numericOffset)) {
+      return invalidRecord(context, value, "invalid_offset", { offset: record.offset });
+    }
+    return {
+      record: {
+        schema_version: record.schema_version || "1.0",
+        event_id: String(record.event_id),
+        source: record.source || "review-dataset",
+        offset: numericOffset,
+        review: String(record.review),
+        created_at: String(record.created_at),
+        raw: record.raw || { ...record },
+      },
+      valid: true,
+    };
+  } catch (error) {
+    return invalidRecord(context, value, "invalid_json", { message: error?.message || String(error) });
+  }
+}
+
+function parseRawTextRecord(value, context, recordParsing) {
+  const columns = list(recordParsing.columns)
+    .slice()
+    .sort((left, right) => Number(left.position) - Number(right.position));
+  const expectedFieldCount = Number(recordParsing.expectedFieldCount || columns.length);
+  const tokens = text(value).split(/\s+/).filter(Boolean);
+  if (expectedFieldCount <= 0 || columns.length !== expectedFieldCount || tokens.length !== expectedFieldCount) {
+    return invalidRecord(context, value, "record_field_count_mismatch", {
+      actualFieldCount: tokens.length,
+      expectedFieldCount,
+    });
+  }
+  try {
+    const record = {};
+    for (const column of columns) {
+      const name = text(column.name);
+      if (!name) return invalidRecord(context, value, "record_field_name_missing");
+      record[name] = castRawTextValue(tokens[Number(column.position)], column.inferredType);
+    }
+    return { record, valid: true };
+  } catch (error) {
+    return invalidRecord(context, value, "record_field_cast_failed", { message: error?.message || String(error) });
+  }
+}
+
+function castRawTextValue(value, inferredType) {
+  const type = text(inferredType).toLowerCase();
+  if (type === "integer") {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) throw new Error(`Invalid integer: ${value}`);
+    return parsed;
+  }
+  if (type === "float") {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) throw new Error(`Invalid float: ${value}`);
+    return parsed;
+  }
+  if (type === "boolean") {
+    if (["true", "1"].includes(String(value).toLowerCase())) return true;
+    if (["false", "0"].includes(String(value).toLowerCase())) return false;
+    throw new Error(`Invalid boolean: ${value}`);
+  }
+  return String(value ?? "");
+}
+
+export function usesLegacyReviewContract(schemaColumns = []) {
+  const configured = list(schemaColumns).filter((column) => column?.included !== false);
+  if (configured.length === 0) return true;
+  const names = new Set(configured.flatMap((column) => [text(column.sourceName), text(column.targetName)]).filter(Boolean));
+  return ["event_id", "offset", "review", "created_at"].every((field) => names.has(field));
+}
+
 export function standardKafkaReviewSchema() {
   return [
     { nullable: false, sourceName: "schema_version", targetName: "schema_version", type: "String" },
@@ -114,6 +209,13 @@ function setRecordValue(record, field, value) {
     target = target[part];
   }
   target[parts.at(-1)] = value;
+}
+
+function invalidRecord(context, rawPayload, reason, details = {}) {
+  return {
+    error: { ...context, ...details, rawPayload, reason },
+    valid: false,
+  };
 }
 
 function text(value) {

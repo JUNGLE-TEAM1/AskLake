@@ -3,8 +3,10 @@ from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.common import CamelModel, to_camel
+from app.schemas.common import CamelModel, DiagnosticFields, to_camel
+from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionAction, PermissionGrant, ResourcePermissions
+from app.schemas.trino_governance import TrinoSqlJobGovernance as TrinoSqlJobGovernanceBase
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
@@ -12,12 +14,27 @@ JobScheduleKind = Literal["daily", "weekly", "monthly", "realtime", "none", "oth
 JobRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 JobRunOutcome = Literal["success", "failed", "canceled"]
 JobDagStepStatus = Literal["pending", "running", "success", "failed", "blocked"]
+JobKind = Literal["pipeline", "trino_sql_materialization"]
 KafkaExecutionMode = Literal["snapshot", "continuous"]
 RuleContractVersion = Literal["1.0"]
 CanonicalRuleKind = Literal["transform", "quality"]
 CanonicalRuleErrorPolicy = Literal["fail_batch", "quarantine", "warn"]
 CanonicalRuleFailureDisposition = Literal["keep", "drop_row", "set_null"]
 ContinuousRuntimeStatus = Literal["starting", "running", "pausing", "paused", "stopping", "stopped", "failed"]
+ContinuousDesiredRuntimeState = Literal["running", "paused", "stopped"]
+ContinuousObservedRuntimeState = Literal["unknown", "starting", "running", "stopping", "stopped", "failed"]
+ContinuousRuntimeErrorStage = Literal[
+    "validation",
+    "runtime_storage",
+    "submission",
+    "execution",
+    "report",
+    "checkpoint",
+    "materialization",
+    "catalog",
+    "dashboard_publication",
+    "reconciliation",
+]
 JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", "startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"]
 
 SourceFieldRows = list[tuple[str, str]]
@@ -147,23 +164,6 @@ class RuleCompilationResult(CamelModel):
     status: Literal["pass", "fail"] = "pass"
 
 
-class RulePreviewRequest(CamelModel):
-    execution_mode: KafkaExecutionMode = "snapshot"
-    records: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
-    rule_contract_version: str = "1.0"
-    rules: list[CanonicalRuleDraft] = Field(default_factory=list)
-    schema_columns: list[SchemaColumnDraft] = Field(default_factory=list)
-    source_type: str = ""
-
-
-class RulePreviewResponse(CamelModel):
-    compilation: RuleCompilationResult
-    quality: dict[str, Any] = Field(default_factory=dict)
-    quarantined: list[dict[str, Any]] = Field(default_factory=list)
-    records: list[dict[str, Any]] = Field(default_factory=list)
-    transform: dict[str, Any] = Field(default_factory=dict)
-
-
 class RetryPolicyDraft(CamelModel):
     backoff_multiplier: float = 2
     backoff_strategy: str = "exponential"
@@ -191,13 +191,26 @@ class KafkaSchemaEvolutionPolicy(CamelModel):
 
 class KafkaContinuousConfigDraft(CamelModel):
     initial_offset_policy: Literal["earliest", "latest"] = "earliest"
-    trigger_interval_seconds: int = Field(default=30, ge=1, le=3600)
-    max_offsets_per_trigger: int = Field(default=10000, ge=1, le=1_000_000)
+    trigger_interval_seconds: int = Field(default=10, ge=1, le=3600)
+    max_offsets_per_trigger: int = Field(default=100, ge=1, le=1_000_000)
     schema_evolution_policy: KafkaSchemaEvolutionPolicy = Field(default_factory=KafkaSchemaEvolutionPolicy)
+
+
+class ContinuousRuntimeErrorDetail(DiagnosticFields):
+    stage: ContinuousRuntimeErrorStage
+    code: str
+    message: str
+    retryable: bool
+    context: dict[str, Any] | None = None
 
 
 class KafkaContinuousRuntime(CamelModel):
     status: ContinuousRuntimeStatus
+    desired_state: ContinuousDesiredRuntimeState
+    observed_state: ContinuousObservedRuntimeState
+    state_revision: int = 0
+    fencing_token: str | None = None
+    error_detail: ContinuousRuntimeErrorDetail | None = None
     checkpoint_path: str
     heartbeat_at: str | None = None
     last_flush_at: str | None = None
@@ -264,7 +277,10 @@ class KafkaContinuousBatch(CamelModel):
     quarantined_count: int = 0
     duration_ms: int | None = None
     source_ranges: list[dict[str, Any]] = Field(default_factory=list)
+    source_boundary: dict[str, Any] = Field(default_factory=dict)
     data_path: str | None = None
+    iceberg_snapshot_id: str | None = None
+    iceberg_table_uri: str | None = None
     quarantine_path: str | None = None
     manifest_path: str | None = None
     last_error: str | None = None
@@ -314,10 +330,26 @@ class ContinuousCompactionRequest(CamelModel):
     target_file_size_mb: int = Field(default=256, ge=128, le=512)
 
 
+class ContinuousIcebergMaintenanceRequest(CamelModel):
+    rewrite_data_files: bool = True
+    target_file_size_mb: int = Field(default=256, ge=128, le=512)
+    expire_snapshots: bool = False
+    snapshot_retention_hours: int = Field(default=168, ge=24, le=8760)
+    retain_last_snapshots: int = Field(default=10, ge=1, le=1000)
+    remove_orphan_files: bool = False
+    orphan_retention_hours: int = Field(default=168, ge=72, le=8760)
+
+    @model_validator(mode="after")
+    def require_operation(self):
+        if not (self.rewrite_data_files or self.expire_snapshots or self.remove_orphan_files):
+            raise ValueError("at least one Iceberg maintenance operation must be enabled")
+        return self
+
+
 class ContinuousMaintenanceRun(CamelModel):
     run_id: str
     job_id: str
-    kind: Literal["quarantine_replay", "compaction"]
+    kind: Literal["quarantine_replay", "compaction", "iceberg_maintenance"]
     status: Literal["queued", "running", "success", "failed"]
     requested_by: str
     config: dict[str, Any] = Field(default_factory=dict)
@@ -336,7 +368,10 @@ class JobRunSummary(CamelModel):
     ended_at: str
     error_summary: str
     failed_stage: str
+    input_bytes: int | None = None
+    input_file_count: int | None = None
     input_rows: str
+    output_file_count: int | None = None
     output_rows: str
     output_path: str | None = None
     run_id: str
@@ -378,6 +413,8 @@ class JobRowData(CamelModel):
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    job_kind: JobKind = "pipeline"
+    sql_recipe: dict[str, Any] | None = None
     execution_mode: KafkaExecutionMode = "snapshot"
     continuous_config: dict[str, Any] | None = None
     continuous_runtime: KafkaContinuousRuntime | None = None
@@ -401,6 +438,7 @@ class JobRowData(CamelModel):
     index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
+    iceberg_target: IcebergWriterTarget | None = None
     target_description: str | None = None
     target_database: str | None = None
     target_tags: list[str] | None = None
@@ -453,6 +491,8 @@ class PermissionOptionUser(CamelModel):
 class PermissionOptionsResponse(CamelModel):
     groups: list[PermissionOptionGroup] = Field(default_factory=list)
     users: list[PermissionOptionUser] = Field(default_factory=list)
+class DeleteJobResponse(CamelModel):
+    deleted_job_id: str
 
 
 class CatalogDataset(CamelModel):
@@ -465,7 +505,7 @@ class CatalogDataset(CamelModel):
     permission_grants: list[PermissionGrant] = Field(default_factory=list)
     permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     layer: TargetLayer
-    status: Literal["available", "approval_required"]
+    status: Literal["preparing", "available", "approval_required"]
     freshness: Literal["latest", "stale", "approval"]
     source: str
     rows: str
@@ -488,6 +528,12 @@ class CatalogDataset(CamelModel):
     index_columns: list[str] | None = None
     lineage_graph: dict[str, Any] | None = None
     materialization_runs: list[dict[str, Any]] = Field(default_factory=list)
+    producer_job_id: str | None = None
+    producer_job_kind: str | None = None
+    execution_mode: str | None = None
+    source_kind: str | None = None
+    relation_mode: Literal["streaming", "static"] | None = None
+    runtime_status: str | None = None
 
 
 class DerivedDatasetSpec(CamelModel):
@@ -507,6 +553,35 @@ class CreateDerivedDatasetRequest(CamelModel):
     source_dataset_id: str
     source_run_id: str
     validation_key: str | None = None
+
+
+class TrinoSqlJobSchedule(CamelModel):
+    mode: Literal["manual", "daily", "weekly"] = "manual"
+    overlap_policy: Literal["skip_if_running"] = "skip_if_running"
+    time: str = "09:00"
+    timezone: str = "Asia/Seoul"
+    weekday: Literal["월", "화", "수", "목", "금", "토", "일"] = "월"
+
+
+class TrinoSqlJobGovernance(TrinoSqlJobGovernanceBase):
+    """Compatibility export for the established app.schemas.etl path."""
+
+
+class TrinoSqlJobTarget(CamelModel):
+    partition_column: str | None = None
+    write_mode: Literal["full_refresh"] = "full_refresh"
+
+
+class CreateTrinoSqlJobRequest(CamelModel):
+    base_dataset_id: str
+    dataset: DerivedDatasetSpec
+    governance: TrinoSqlJobGovernance
+    job_name: str | None = None
+    query: str
+    reference_dataset_ids: list[str] = Field(default_factory=list)
+    schedule: TrinoSqlJobSchedule = Field(default_factory=TrinoSqlJobSchedule)
+    source_run_id: str
+    target: TrinoSqlJobTarget = Field(default_factory=TrinoSqlJobTarget)
 
 
 class CreatePipelineRequest(CamelModel):
@@ -686,7 +761,10 @@ class AirflowRunExecutionResponse(CamelModel):
     job_id: str
     run_id: str
     dataset_id: str | None = None
+    input_bytes: int = 0
+    input_file_count: int = 0
     input_rows: int = 0
+    output_file_count: int = 0
     output_rows: int = 0
     output_path: str = "-"
     duration_ms: int | None = None
@@ -788,6 +866,7 @@ class KafkaReviewIngestResponse(CamelModel):
 class KafkaReplayProducerRequest(CamelModel):
     topic: str = "reviews.raw"
     input_path: str | None = None
+    payload_mode: Literal["json_envelope", "raw_text"] = "json_envelope"
     rate: int = Field(default=10, ge=1, le=100_000)
     batch_size: int = Field(default=100, ge=1, le=10_000)
     progress_every: int = Field(default=100, ge=1, le=100_000)
@@ -860,6 +939,9 @@ class SchemaDraft(CamelModel):
 class SourceDraft(CamelModel):
     connection_message: str | None = None
     connection_status: Literal["idle", "testing", "success", "failed"]
+    detected_format: str | None = None
+    raw_preview_lines: list[str] = Field(default_factory=list)
+    requires_record_parsing: bool | None = None
     source_config: SourceFieldRows
     source_label: str
     source_type: str
@@ -877,6 +959,9 @@ class SourceConnectorRequest(CamelModel):
 
 class SourceConnectorDefaults(CamelModel):
     kafka_broker: str
+    kafka_topic: str
+    s3_bucket: str
+    s3_prefix: str
 
 
 class SourceAssetsRequest(CamelModel):
@@ -892,9 +977,23 @@ class SourceAssetsResponse(CamelModel):
     prefix: str
 
 
+class SourceDatasetSummary(CamelModel):
+    selection_kind: Literal["prefix"]
+    bucket: str
+    prefix: str
+    format: str
+    file_count: int = Field(ge=1)
+    total_bytes: int = Field(ge=0)
+    representative_object: str
+    schema_fingerprint: str | None = None
+    schema_compatible: bool
+    excluded_file_count: int = Field(ge=0)
+
+
 class SourceConnectorAnalysis(CamelModel):
     action_path: str
     assets: list[tuple[str, str, str]]
+    dataset_summary: SourceDatasetSummary | None = None
     draft_patch: DraftPipelinePatch
     logs: list[str]
     message: str

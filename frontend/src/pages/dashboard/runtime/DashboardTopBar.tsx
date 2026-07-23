@@ -2,14 +2,23 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Check, Eye, Pencil, RefreshCw, Save, Share2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StatusBadge } from "@/components/ui/status-badge";
+import {
+  dashboardAutoRefreshStatusCopy,
+  type DashboardAutoRefreshStatus,
+} from "./dashboardAutoRefresh";
 
 export function DashboardTopBar({
+  autoRefreshEnabled,
+  autoRefreshError,
+  autoRefreshStatus,
   hasPublishedRevision,
   isPublishing = false,
   isRefreshing = false,
   isRenaming = false,
   mode,
   onOpenDraft,
+  onAutoRefreshChange,
   onOpenPublished,
   onPublishDraft,
   onRefresh,
@@ -17,12 +26,16 @@ export function DashboardTopBar({
   onShare,
   title,
 }: {
+  autoRefreshEnabled: boolean;
+  autoRefreshError?: string | null;
+  autoRefreshStatus: DashboardAutoRefreshStatus;
   hasPublishedRevision?: boolean;
   isPublishing?: boolean;
   isRefreshing?: boolean;
   isRenaming?: boolean;
   mode: "published" | "draft";
   onOpenDraft?: () => void;
+  onAutoRefreshChange: (enabled: boolean) => void;
   onOpenPublished?: () => void;
   onPublishDraft?: () => void;
   onRefresh?: () => void;
@@ -30,9 +43,19 @@ export function DashboardTopBar({
   onShare?: () => void;
   title: string;
 }) {
+  void autoRefreshEnabled;
+  void onAutoRefreshChange;
   const [draftTitle, setDraftTitle] = useState(title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const canRename = mode === "draft" && Boolean(onRenameTitle);
+  const autoRefreshStatusLabel = dashboardAutoRefreshStatusCopy(autoRefreshStatus);
+  const autoRefreshStatusTone = autoRefreshStatus === "active"
+    ? "success"
+    : autoRefreshStatus === "error"
+      ? "danger"
+      : autoRefreshStatus === "connecting"
+        ? "warning"
+        : "muted";
 
   useEffect(() => {
     if (!isEditingTitle) setDraftTitle(title);
@@ -80,6 +103,13 @@ export function DashboardTopBar({
         ) : (
           <div className="asklake-dashboard-title-row">
             <h1>{title}</h1>
+            <StatusBadge
+              aria-label={`대시보드 동기화 상태: ${autoRefreshStatusLabel}`}
+              title={autoRefreshError ?? autoRefreshStatusLabel}
+              tone={autoRefreshStatusTone}
+            >
+              {autoRefreshStatusLabel}
+            </StatusBadge>
             {canRename && (
               <Button
                 className="asklake-dashboard-title-edit-button"

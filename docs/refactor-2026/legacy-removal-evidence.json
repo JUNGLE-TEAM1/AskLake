@@ -1,0 +1,177 @@
+{
+  "environment": "production",
+  "minimumZeroCallDays": 30,
+  "paths": [
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "data-platform",
+      "pathId": "sql.duckdb-compatibility-engine"
+    },
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "analytics-experience",
+      "pathId": "dashboard-assistant.degraded-no-ai"
+    },
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "catalog",
+      "pathId": "catalog.synthetic-lineage-fallback"
+    },
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "governance",
+      "pathId": "etl.legacy-permission-roles"
+    },
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "etl-contracts",
+      "pathId": "rules.legacy-draft-adapter"
+    },
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "analytics-experience",
+      "pathId": "dashboard.legacy-color-map"
+    },
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "stream-runtime",
+      "pathId": "continuous.legacy-error-string"
+    },
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "stream-runtime",
+      "pathId": "runtime.versionless-json-reader"
+    },
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "frontend-platform",
+      "pathId": "frontend.initial-read-degraded"
+    },
+    {
+      "approval": {
+        "reference": null,
+        "reviewedAt": null,
+        "reviewedBy": null,
+        "status": "not_requested"
+      },
+      "observation": {
+        "evidence": [],
+        "observedCalls": null,
+        "status": "not_started",
+        "windowEnd": null,
+        "windowStart": null
+      },
+      "owner": "frontend-etl",
+      "pathId": "frontend.etl-draft-v0"
+    }
+  ],
+  "schemaVersion": 1
+}

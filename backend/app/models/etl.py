@@ -1,4 +1,6 @@
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -25,6 +27,8 @@ class ETLJobModel(TimestampMixin, Base):
     source_config: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     source_label: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    job_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="pipeline")
+    sql_recipe: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     execution_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="snapshot")
     continuous_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     record_parsing: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -43,6 +47,7 @@ class ETLJobModel(TimestampMixin, Base):
     index_columns: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     compression: Mapped[str | None] = mapped_column(String(64), nullable=True)
     storage_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    iceberg_target: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     target_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_database: Mapped[str | None] = mapped_column(String(255), nullable=True)
     target_tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -89,6 +94,24 @@ class ETLRunModel(TimestampMixin, Base):
     sync_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
 
+class ReviewAnalysisRunModel(TimestampMixin, Base):
+    __tablename__ = "review_analysis_runs"
+    __table_args__ = (
+        Index("ix_review_analysis_runs_status", "status"),
+        Index("ix_review_analysis_runs_created_by", "created_by"),
+    )
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[dict] = mapped_column(JSON, nullable=False)
+    request_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class KafkaSnapshotModel(TimestampMixin, Base):
     __tablename__ = "kafka_snapshots"
     __table_args__ = (
@@ -102,6 +125,17 @@ class KafkaSnapshotModel(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ContinuousControlLeaseModel(Base):
+    """Fenced control-plane ownership, independent from a stream attempt."""
+
+    __tablename__ = "continuous_control_leases"
+
+    control_plane: Mapped[str] = mapped_column(String(120), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class KafkaContinuousRuntimeModel(TimestampMixin, Base):
@@ -182,7 +216,10 @@ class KafkaContinuousBatchModel(TimestampMixin, Base):
     quarantined_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_ranges: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    source_boundary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     data_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    iceberg_snapshot_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    iceberg_table_uri: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     quarantine_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     manifest_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

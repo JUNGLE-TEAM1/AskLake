@@ -1,0 +1,6 @@
+apiVersion: v2
+name: asklake-workloads
+description: AskLake EKS MVP application workload contract
+type: application
+version: 0.2.0
+appVersion: "0.1.0"

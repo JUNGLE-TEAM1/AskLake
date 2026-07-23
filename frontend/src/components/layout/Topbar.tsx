@@ -1,74 +1,62 @@
-import { Activity, LogIn, LogOut, RefreshCw } from "lucide-react";
-import type { AuditEntry } from "../../types";
-import type { CurrentUserResponse } from "../../types";
+import { useLayoutEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Languages, Moon, type LucideIcon } from "lucide-react";
 
-export function Topbar({
-  auditLogs,
-  auditOpen,
-  currentUser,
-  onAccount,
-  onAuditToggle,
-  onLogin,
-  onLogout,
-  onRefresh,
-}: {
-  auditLogs: AuditEntry[];
-  auditOpen: boolean;
-  currentUser: CurrentUserResponse | null;
-  onAccount: () => void;
-  onAuditToggle: () => void;
-  onLogin: () => void;
-  onLogout: () => void;
-  onRefresh: () => void;
-}) {
-  const displayName = currentUser?.profile.displayName || currentUser?.displayName || "";
-  const initials = currentUser?.profile.avatarInitials || displayName.slice(0, 2).toUpperCase();
+import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+type TopbarSection = {
+  icon: LucideIcon;
+  label: string;
+};
+
+const pageHeaderActionsId = "app-page-header-actions";
+
+export function PageHeaderActions({ children }: { children: ReactNode }) {
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    setTarget(document.getElementById(pageHeaderActionsId));
+  }, []);
+
+  return target ? createPortal(children, target) : null;
+}
+
+export function Topbar({ section }: { section?: TopbarSection | null }) {
+  if (!section) return null;
+
+  const SectionIcon = section?.icon;
+
   return (
     <header className="topbar">
-      <div className="topbar-actions">
-        <div className="audit-menu">
-          <button className={auditOpen ? "icon-button active" : "icon-button"} type="button" aria-label="최근 API 호출" onClick={onAuditToggle}>
-            <Activity size={18} />
-            {auditLogs.length > 0 && <span className="audit-dot" />}
-          </button>
-          {auditOpen && (
-            <section className="audit-popover">
-              <div className="audit-popover-header">
-                <strong>최근 API 호출</strong>
-                <span>{auditLogs.length}건</span>
-              </div>
-              <div className="audit-log-list">
-                {auditLogs.slice(0, 8).map((log) => (
-                  <article className="audit-log-item" key={log.request_id}>
-                    <div>
-                      <strong>{log.action}</strong>
-                      <span>{log.api_path}</span>
-                    </div>
-                    <em>{log.result}</em>
-                  </article>
-                ))}
-                {auditLogs.length === 0 && <p>아직 기록된 호출이 없습니다.</p>}
-              </div>
-            </section>
-          )}
-        </div>
-        <button className="icon-button" type="button" aria-label="Refresh" onClick={onRefresh}>
-          <RefreshCw size={18} />
-        </button>
-        {currentUser ? (
-          <>
-            <button className="icon-button" type="button" aria-label="로그아웃" onClick={onLogout}>
-              <LogOut size={18} />
-            </button>
-            <button className="avatar-button" type="button" aria-label="내 프로필" onClick={onAccount}>
-              <span className="avatar">{initials}</span>
-            </button>
-          </>
-        ) : (
-          <button className="icon-button" type="button" aria-label="로그인" onClick={onLogin}>
-            <LogIn size={18} />
-          </button>
-        )}
+      <div className="topbar-section">
+        <span aria-hidden="true" className="topbar-section-icon">
+          <SectionIcon />
+        </span>
+        <h1>{section.label}</h1>
+      </div>
+      <div className="topbar-end">
+        <TooltipProvider delayDuration={300}>
+          <div aria-label="화면 설정" className="topbar-tools">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton className="topbar-tool-button" label="다크 모드" size="sm" type="button">
+                  <Moon aria-hidden="true" />
+                </IconButton>
+              </TooltipTrigger>
+              <TooltipContent>다크 모드</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton className="topbar-tool-button" label="한국어·영어 전환" size="sm" type="button">
+                  <Languages aria-hidden="true" />
+                </IconButton>
+              </TooltipTrigger>
+              <TooltipContent>한국어·영어 전환</TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
+        <div className="topbar-page-actions" id={pageHeaderActionsId} />
       </div>
     </header>
   );

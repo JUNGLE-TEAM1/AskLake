@@ -1,0 +1,13 @@
+{
+  "policy_version": "1.0.0",
+  "minimum_repetitions": 5,
+  "maximum_correctness_drop": 0.0,
+  "maximum_scan_p95_regression_ratio": 0.05,
+  "maximum_wall_p95_regression_ratio": 0.25,
+  "wall_p95_absolute_allowance_ms": 20,
+  "maximum_cpu_p95_regression_ratio": 0.25,
+  "cpu_p95_absolute_allowance_ms": 10,
+  "maximum_memory_p95_regression_ratio": 0.1,
+  "memory_p95_absolute_allowance_bytes": 4194304,
+  "allow_new_spill": false
+}

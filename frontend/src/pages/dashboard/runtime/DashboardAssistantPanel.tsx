@@ -1,29 +1,37 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import { cn } from "@/lib/utils";
 import type { DashboardRuntimeWidget } from "../../../types";
 import {
-  type DashboardAssistantCreateWidgetAction,
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
   type DashboardAssistantReportAction,
   type DashboardAssistantResponse,
-  type DashboardAssistantUpdateWidgetAction,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
+import { applyAssistantWidgetActions, hasWidgetMutationAction } from "./dashboardAssistantActions";
+import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
+import {
+  buildDashboardAssistantRequestPrompt,
+  classifyDashboardAssistantMode,
+  resolveDashboardAssistantMutationTarget,
+} from "./dashboardAssistantIntent";
+import { beginDashboardAssistantRequest, useDashboardAssistantRequestGate } from "./useDashboardAssistantRequestGate";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type DashboardAssistantPanelProps = {
+  currentDatasetId?: string | null;
   dashboardId?: string;
   datasets: DashboardDatasetOption[];
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<boolean>;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
   pageId: string | null;
   promptInsertion?: DashboardAssistantPromptInsertion | null;
+  selectedDatasetIds?: string[];
   selectedWidget: DashboardRuntimeWidget | null;
   widgets: DashboardRuntimeWidget[];
 };
@@ -39,6 +47,48 @@ type AssistantMessage = {
   text: string;
 };
 
+function semanticRetrievalSummary(response: DashboardAssistantResponse) {
+  const retrieval = response.retrieval;
+  if (!retrieval || (response.sources?.length ?? 0) === 0) return "";
+  const resultCount = retrieval.resultCount ?? response.sources?.length ?? 0;
+  const modelNames = retrieval.semanticModelNames ?? [];
+  const modelVersions = retrieval.semanticModelVersions ?? [];
+  const modelSummary = modelNames.map((name, index) => `${name}${modelVersions[index] ? ` v${modelVersions[index]}` : ""}`).join(", ");
+  const datasetSummary = (retrieval.datasetIds ?? []).join(", ");
+  const sourceTitles = (response.sources ?? [])
+    .map((source) => source.title || source.body?.trim().slice(0, 120) || source.datasetId)
+    .filter((title): title is string => Boolean(title));
+  const evidence = sourceTitles.length > 0 ? ` · 근거: ${sourceTitles.join(" / ")}` : "";
+  const planner = retrieval.queryPlannerProvider || retrieval.queryPlannerModel
+    ? ` · 계획: ${[retrieval.queryPlannerProvider, retrieval.queryPlannerModel].filter(Boolean).join(" · ")}`
+    : "";
+  const embeddings = Object.values(retrieval.queryEmbeddings ?? {})
+    .map((item) => [item.provider, item.model, item.dimensions ? `${item.dimensions}차원` : null].filter(Boolean).join(" · "))
+    .filter(Boolean);
+  const embedding = embeddings.length > 0 ? ` · 임베딩: ${Array.from(new Set(embeddings)).join(", ")}` : "";
+  const relevance = retrieval.relevanceProvider || retrieval.relevanceModel
+    ? ` · 관련성: ${[retrieval.relevanceProvider, retrieval.relevanceModel].filter(Boolean).join(" · ")}`
+    : "";
+  return `RAG 근거 · ${modelSummary || "semantic model 없음"} · Dataset: ${datasetSummary || "-"} · ${retrieval.status ?? "unknown"} · ${resultCount}건${planner}${embedding}${relevance}${evidence}`;
+}
+
+function assistantResponseText(response: DashboardAssistantResponse, actionMessages: string[]) {
+  const reportAction = response.actions.find(
+    (action): action is DashboardAssistantReportAction => action.type === "report",
+  );
+  const provenance = response.provider && !["local-input-guard", "local-join-guard", "unavailable"].includes(response.provider)
+    ? `AI 모델 · ${[response.provider, response.model].filter(Boolean).join(" · ")}`
+    : "";
+  const warning = response.warnings.length > 0 ? `경고: ${response.warnings.join(" / ")}` : "";
+  return [
+    reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
+    ...actionMessages,
+    provenance,
+    semanticRetrievalSummary(response),
+    warning,
+  ].filter(Boolean).join("\n\n");
+}
+
 function AskLakeAssistantMark() {
   return <img alt="" aria-hidden="true" className="asklake-assistant-mark" src={askLakeNessiIconUrl} />;
 }
@@ -51,13 +101,29 @@ function appendPromptText(currentPrompt: string, nextText: string) {
   return `${current} ${next}`;
 }
 
+function buildAssistantRequestIntent(
+  prompt: string,
+  messages: AssistantMessage[],
+  hasSelectedWidget: boolean,
+) {
+  const previousUserPrompts = messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.text);
+  return {
+    mode: classifyDashboardAssistantMode(prompt, { hasSelectedWidget, previousUserPrompts }),
+    requestPrompt: buildDashboardAssistantRequestPrompt(prompt, previousUserPrompts),
+  };
+}
+
 export function DashboardAssistantPanel({
+  currentDatasetId,
   dashboardId,
   datasets,
   onCreateWidget,
   onUpdateWidget,
   pageId,
   promptInsertion,
+  selectedDatasetIds = [],
   selectedWidget,
   widgets,
 }: DashboardAssistantPanelProps) {
@@ -67,12 +133,19 @@ export function DashboardAssistantPanel({
   const [prompt, setPrompt] = useState("");
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
+  const surfaceKey = JSON.stringify([dashboardId, pageId]);
+  const surfaceKeyRef = useRef(surfaceKey);
+  surfaceKeyRef.current = surfaceKey;
+  const requests = useDashboardAssistantRequestGate(JSON.stringify([
+    currentDatasetId,
+    dashboardId,
+    pageId,
+    selectedWidget?.id,
+    selectedDatasetIds,
+    dashboardAssistantWidgetContextSignature(widgets),
+  ]), () => setIsSubmitting(false));
   const isConfigured = isDashboardAssistantConfigured();
   const shouldReduceMotion = useReducedMotion();
-  const targetWidgets = useMemo(() => {
-    return selectedWidget ? [selectedWidget] : widgets;
-  }, [selectedWidget, widgets]);
-
   const submitQuestion = async () => {
     const nextPrompt = prompt.trim();
     if (!nextPrompt || isSubmitting) return;
@@ -97,18 +170,30 @@ export function DashboardAssistantPanel({
     }
 
     setIsSubmitting(true);
+    const { mode, requestPrompt } = buildAssistantRequestIntent(nextPrompt, messages, Boolean(selectedWidget));
+    const selectedWidgetId = mode === "visualization_request"
+      ? resolveDashboardAssistantMutationTarget(nextPrompt, selectedWidget?.id)
+      : selectedWidget?.id ?? null;
+    const targetWidgets = selectedWidgetId
+      ? widgets.filter((widget) => widget.id === selectedWidgetId)
+      : widgets;
+    const submissionSurfaceKey = surfaceKey;
+    const lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-assistant", version: pageId, params: { currentDatasetId, dashboardId, mode, prompt: requestPrompt, selectedWidgetId } });
     try {
       const response = await requestDashboardAssistant({
         dashboardId,
-        mode: "dashboard_question",
+        currentDatasetId,
+        mode,
         pageId,
-        prompt: nextPrompt,
-        selectedWidgetId: selectedWidget?.id ?? null,
+        prompt: requestPrompt,
+        selectedDatasetIds,
+        selectedWidgetId,
         widgets: targetWidgets.map(buildDashboardAssistantWidgetContext),
-      });
-      const reportAction = response.actions.find(
-        (action): action is DashboardAssistantReportAction => action.type === "report",
-      );
+      }, { signal: lease.signal });
+      if (!requests.current.isCurrent(lease)) return;
+      if (mode === "visualization_request" && !hasWidgetMutationAction(response)) {
+        throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
+      }
       const actionMessages = await applyAssistantWidgetActions({
         datasets,
         onCreateWidget,
@@ -116,30 +201,21 @@ export function DashboardAssistantPanel({
         response,
         widgets,
       });
-      const warningMessage = response.warnings.length > 0
-        ? `경고: ${response.warnings.join(" / ")}`
-        : "";
+      if (surfaceKeyRef.current !== submissionSurfaceKey) return;
       setMessages((current) => [
         ...current,
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          text: [
-            reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
-            ...actionMessages,
-            warningMessage,
-          ].filter(Boolean).join("\n\n"),
+          text: assistantResponseText(response, actionMessages),
         },
       ]);
     } catch (requestError) {
+      if (!requests.current.isCurrent(lease)) return;
       const message = requestError instanceof Error ? requestError.message : "Assistant 요청에 실패했습니다.";
       setError(message);
-      setMessages((current) => [
-        ...current,
-        { id: `assistant-error-${Date.now()}`, role: "assistant", text: message },
-      ]);
     } finally {
-      setIsSubmitting(false);
+      if (requests.current.complete(lease)) setIsSubmitting(false);
     }
   };
 
@@ -230,84 +306,4 @@ export function DashboardAssistantPanel({
       {error && <span className="asklake-assistant-error">{error}</span>}
     </section>
   );
-}
-
-async function applyAssistantWidgetActions({
-  datasets,
-  onCreateWidget,
-  onUpdateWidget,
-  response,
-  widgets,
-}: {
-  datasets: DashboardDatasetOption[];
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
-  response: DashboardAssistantResponse;
-  widgets: DashboardRuntimeWidget[];
-}) {
-  const messages: string[] = [];
-
-  for (const action of response.actions) {
-    if (action.type === "report") continue;
-
-    if (action.type === "create_widget") {
-      const result = await applyCreateWidgetAction(action, onCreateWidget);
-      if (result) messages.push(result);
-      continue;
-    }
-
-    if (action.type === "update_widget") {
-      const result = await applyUpdateWidgetAction(action, datasets, widgets, onUpdateWidget);
-      if (result) messages.push(result);
-    }
-  }
-
-  if (messages.length === 0 && response.actions.some((action) => action.type !== "report")) {
-    messages.push("위젯 변경 action을 받았지만 화면에 적용하지 못했습니다.");
-  }
-
-  return messages;
-}
-
-async function applyCreateWidgetAction(
-  action: DashboardAssistantCreateWidgetAction,
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void,
-) {
-  if (!onCreateWidget) return "위젯 생성 함수가 연결되지 않아 새 위젯을 추가하지 못했습니다.";
-  await onCreateWidget({
-    config: action.widget.config,
-    datasetId: action.widget.datasetId,
-    title: action.widget.title || "AI 추천 위젯",
-    type: action.widget.type,
-  });
-  return "AI가 제안한 위젯을 추가했습니다.";
-}
-
-async function applyUpdateWidgetAction(
-  action: DashboardAssistantUpdateWidgetAction,
-  datasets: DashboardDatasetOption[],
-  widgets: DashboardRuntimeWidget[],
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void,
-) {
-  if (!onUpdateWidget) return "위젯 수정 함수가 연결되지 않아 변경사항을 적용하지 못했습니다.";
-
-  const currentWidget = widgets.find((widget) => widget.id === action.widgetId);
-  if (!currentWidget && (!action.patch.type || !action.patch.config)) {
-    return "수정 대상 위젯을 찾지 못해 변경사항을 적용하지 못했습니다.";
-  }
-
-  const nextDatasetId = action.patch.datasetId ?? currentWidget?.datasetId ?? null;
-  const nextRows = nextDatasetId ? datasets.find((dataset) => dataset.id === nextDatasetId)?.rows : undefined;
-
-  await onUpdateWidget(action.widgetId, {
-    config: {
-      ...(currentWidget?.config ?? {}),
-      ...(action.patch.config ?? {}),
-    } as UpdateDraftWidgetFormInput["config"],
-    data: nextRows?.length ? nextRows.map((row) => ({ ...row })) : undefined,
-    datasetId: nextDatasetId,
-    title: action.patch.title ?? currentWidget?.title ?? "제목 없는 위젯",
-    type: action.patch.type ?? currentWidget?.type ?? "bar_chart",
-  });
-  return "AI가 제안한 위젯 변경사항을 적용했습니다.";
 }

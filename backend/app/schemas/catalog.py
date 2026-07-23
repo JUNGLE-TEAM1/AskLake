@@ -1,18 +1,26 @@
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.schemas.common import CamelModel, CursorPageMeta
+from app.schemas.dashboard import DashboardWidgetFilter
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 CatalogLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
-DatasetFreshness = Literal["latest", "stale", "approval"]
-DatasetStatus = Literal["available", "approval_required"]
+DatasetFreshness = Literal["latest", "realtime", "stale", "approval"]
+DatasetStatus = Literal["preparing", "available", "approval_required"]
 DerivedDatasetLayer = Literal["SILVER", "GOLD"]
 LineageLayer = Literal["SOURCE", "PROCESS", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]
 QueryRefreshPolicy = Literal["manual"]
 MaterializationRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
-MaterializationSourceKind = Literal["etl", "sql", "kafka"]
+MaterializationSourceKind = Literal["etl", "sql", "kafka", "continuous_sql"]
+MaterializationMode = Literal["snapshot", "delta"]
+QueryEngineTableFormat = Literal["iceberg", "parquet"]
+QueryEngineStatus = Literal["pending", "available", "registration_failed", "unavailable"]
+CatalogDatasetDeletionStatus = Literal["queued", "validating", "purging", "metadata_cleanup", "succeeded", "failed"]
+PhysicalBindingRole = Literal["serving", "archive"]
+PhysicalBindingEngine = Literal["clickhouse", "trino"]
+PhysicalBindingStatus = Literal["pending", "active", "stale", "failed"]
 
 
 class LineageGraphColumn(CamelModel):
@@ -42,21 +50,66 @@ class LineageGraphResponse(CamelModel):
     edges: list[LineageGraphEdge]
 
 
+class QueryEngineTableRef(CamelModel):
+    catalog: str
+    schema_: str = Field(alias="schema")
+    table: str
+    format: QueryEngineTableFormat
+    partition_columns: list[str] = Field(default_factory=list)
+
+
+class ClickHouseTableRef(CamelModel):
+    database: str
+    table: str
+
+
+class DatasetPhysicalBinding(CamelModel):
+    role: PhysicalBindingRole
+    engine: PhysicalBindingEngine
+    status: PhysicalBindingStatus
+    binding_epoch: int = Field(ge=0)
+    version_id: str | None = None
+    pipeline_version_id: str | None = None
+    database: str | None = None
+    table: str
+    catalog: str | None = None
+    schema_: str | None = Field(default=None, alias="schema")
+    snapshot_id: str | None = None
+    source_boundary: dict[str, Any] | None = None
+    checksum: str | None = None
+    dimension_version_ids: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_engine_location(self):
+        if self.engine == "clickhouse" and (self.role != "serving" or not self.database):
+            raise ValueError("ClickHouse physical binding requires serving role and database")
+        if self.engine == "trino" and (self.role != "archive" or not self.catalog or not self.schema_):
+            raise ValueError("Trino physical binding requires archive role, catalog, and schema")
+        return self
+
+
 class DatasetMaterializationRun(CamelModel):
     created_at: str
+    iceberg_committed_at: str | None = None
+    iceberg_snapshot_id: str | None = None
     job_id: str
+    kafka_snapshot: dict[str, Any] | None = None
+    materialization_mode: MaterializationMode = "snapshot"
     publication_manifest: str | None = None
     quality: dict[str, Any] | None = None
+    query_engine_table: QueryEngineTableRef | None = None
     row_count: int = 0
     rule_contract_version: str | None = None
     rule_fingerprint: str | None = None
     run_id: str
     runtime_fingerprint: str | None = None
     schema_fingerprint: str | None = None
+    source_boundary: dict[str, Any] | None = None
     source_kind: MaterializationSourceKind = "etl"
     source_label: str
     source_ranges: list[dict[str, Any]] = Field(default_factory=list)
     status: MaterializationRunStatus
+    storage_format: str | None = None
     storage_location: str | None = None
     storage_size_bytes: int = 0
     transform: dict[str, Any] | None = None
@@ -79,12 +132,15 @@ class CatalogDatasetResponse(CamelModel):
     next_refresh: str
     owner: str
     quality: str
-    rag: bool
+    # Kept only to deserialize Catalog payloads created before RAG was removed.
+    # New runtime paths neither create nor consume RAG metadata.
+    rag: bool = False
     rows: str
     sample_rows: list[list[str]]
     schema_: list[tuple[str, str]] = Field(alias="schema")
     size: str
     source: str
+    source_manifest: dict[str, Any] | None = None
     source_run_id: str | None = None
     status: DatasetStatus
     storage_format: str | None = None
@@ -92,9 +148,52 @@ class CatalogDatasetResponse(CamelModel):
     storage_size_bytes: int | None = None
     partition: str | None = None
     partition_columns: list[str] | None = None
+    query_engine_table: QueryEngineTableRef | None = None
+    query_engine_status: QueryEngineStatus = "unavailable"
+    query_engine_error: str | None = None
+    clickhouse_table: ClickHouseTableRef | None = None
+    physical_bindings: list[DatasetPhysicalBinding] = Field(default_factory=list)
+    query_engine_required: bool = False
     index_columns: list[str] | None = None
+    index_columns_unique: bool = False
+    unique_key_columns: list[str] = Field(default_factory=list)
+    unique_key_sets: list[list[str]] = Field(default_factory=list)
+    relation_mode: Literal["streaming", "static"] | None = None
+    producer_job_id: str | None = None
+    producer_job_kind: str | None = None
+    execution_mode: str | None = None
+    source_kind: str | None = None
+    runtime_status: str | None = None
+    streaming_source: dict[str, Any] | None = None
+    iceberg_snapshot_id: str | None = None
+    schema_fingerprint: str | None = None
+    estimated_row_count: int | None = None
     tags: list[str]
     upstream: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_query_engine_status(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        if payload.get("queryEngineStatus") is None and payload.get("query_engine_status") is None:
+            payload["queryEngineStatus"] = "available" if payload.get("queryEngineTable") or payload.get("query_engine_table") else "unavailable"
+        query_engine_status = payload.get("queryEngineStatus") or payload.get("query_engine_status")
+        if query_engine_status != "available":
+            payload.pop("queryEngineTable", None)
+            payload.pop("query_engine_table", None)
+        if query_engine_status != "registration_failed":
+            payload.pop("queryEngineError", None)
+            payload.pop("query_engine_error", None)
+        return payload
+
+    @model_validator(mode="after")
+    def validate_active_physical_bindings(self):
+        active_roles = [item.role for item in self.physical_bindings if item.status == "active"]
+        if len(active_roles) != len(set(active_roles)):
+            raise ValueError("Dataset can have only one active physical binding per role")
+        return self
 
 
 class CatalogDatasetListResponse(CamelModel):
@@ -102,9 +201,95 @@ class CatalogDatasetListResponse(CamelModel):
     page: CursorPageMeta = Field(default_factory=CursorPageMeta)
 
 
+class CatalogDatasetRowsResponse(CamelModel):
+    columns: list[str]
+    dataset_id: str
+    dataset_name: str
+    has_next: bool
+    limit: int
+    offset: int
+    returned_rows: int
+    row_count: int
+    rows: list[list[str]]
+
+
+class CatalogDatasetFilterValuesRequest(CamelModel):
+    column: str = Field(min_length=1, max_length=255)
+    search: str | None = Field(default=None, max_length=200)
+    limit: int = Field(default=50, ge=1, le=100)
+    context_filters: list[DashboardWidgetFilter] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+
+
+class CatalogDatasetFilterValue(CamelModel):
+    label: str
+    value: Any
+
+
+class CatalogDatasetFilterValuesResponse(CamelModel):
+    column: str
+    dataset_id: str
+    truncated: bool = False
+    values: list[CatalogDatasetFilterValue] = Field(default_factory=list)
+
+
+class VerifyCatalogUniqueKeyRequest(CamelModel):
+    columns: list[str] = Field(min_length=1, max_length=16)
+
+
+class VerifyCatalogUniqueKeyResponse(CamelModel):
+    columns: list[str]
+    dataset: CatalogDatasetResponse
+    distinct_keys: int = Field(ge=0)
+    invalid_key_rows: int = Field(ge=0)
+    total_rows: int = Field(ge=0)
+    verified: Literal[True] = True
+
+
 class DeleteMaterializationRunResponse(CamelModel):
     dataset: CatalogDatasetResponse
     deleted_run_id: str
+
+
+class CatalogDatasetDeletionBlocker(CamelModel):
+    resource_type: str
+    resource_id: str
+    resource_name: str
+    reason: str
+
+
+class CatalogDatasetDeletionArtifact(CamelModel):
+    kind: str
+    location: str
+
+
+class CatalogDatasetDeletionImpact(CamelModel):
+    artifacts: list[CatalogDatasetDeletionArtifact] = Field(default_factory=list)
+    blockers: list[CatalogDatasetDeletionBlocker] = Field(default_factory=list)
+    can_delete: bool
+    dataset_id: str
+    dataset_name: str
+    estimated_size_bytes: int = 0
+    retained_resources: list[str] = Field(default_factory=list)
+
+
+class CatalogDatasetDeletionAcceptedResponse(CamelModel):
+    dataset_id: str
+    deletion_id: str
+    status: CatalogDatasetDeletionStatus
+
+
+class CatalogDatasetDeletionStatusResponse(CamelModel):
+    created_at: str
+    dataset_id: str
+    dataset_name: str
+    deletion_id: str
+    error_code: str | None = None
+    error_message: str | None = None
+    status: CatalogDatasetDeletionStatus
+    updated_at: str
 
 
 class CreateDerivedDatasetMetadata(CamelModel):

@@ -1,5 +1,10 @@
 import type { RefObject } from "react";
-import { BarChart3, PanelLeftClose, Search, Table2 } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
+import {
+  SQL_PAGE_SECTION_MARKER_CLASS_NAME,
+  SqlPageIcon as Search,
+  SqlSectionMarker,
+} from "./SqlPageIcon";
 
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
@@ -7,7 +12,6 @@ import { FieldTitle } from "@/components/ui/field";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { CatalogDataset } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";
@@ -70,30 +74,33 @@ export function SqlDatasetContextPanel({
 }: SqlDatasetContextPanelProps) {
   return (
     <Panel asChild>
-      <aside className={styles.datasetPanel} ref={contextPanelRef}>
+      <aside className={styles.datasetPanel} id="sql-dataset-tools" ref={contextPanelRef}>
         <Tabs
-          className="grid h-full min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4"
+          className="grid h-full min-h-0 grid-rows-[max-content_minmax(0,1fr)]"
           onValueChange={(value) => onTabChange(value as SqlContextPanelTab)}
           value={tab}
         >
-          <div className="grid gap-4">
+          <div className="grid">
             <PanelHeader
               actions={(
-                <Button type="button" onClick={onCollapse} aria-label="SQL 도구 접기" title="SQL 도구 접기" size="icon" variant="ghost">
-                  <PanelLeftClose data-icon="inline-start" />
+                <Button aria-controls="sql-dataset-tools" aria-expanded="true" type="button" onClick={onCollapse} aria-label="SQL 도구 접기" title="SQL 도구 접기" size="icon" variant="ghost">
+                  <ChevronLeft aria-hidden="true" />
                 </Button>
               )}
-              className="min-h-0 p-0"
-              icon={<Table2 size={16} />}
+              icon={<SqlSectionMarker />}
+              iconClassName={SQL_PAGE_SECTION_MARKER_CLASS_NAME}
+              size="section"
               title="SQL 도구"
             />
-            <TabsList className="grid w-full grid-cols-2" aria-label="SQL 도구 선택">
-              <TabsTrigger value="tables"><Table2 /> 분석 테이블</TabsTrigger>
-              <TabsTrigger value="chart"><BarChart3 /> 차트 생성하기</TabsTrigger>
-            </TabsList>
+            <div className="px-4 pb-4 pt-3">
+              <TabsList className="grid w-full grid-cols-2" aria-label="SQL 도구 선택">
+                <TabsTrigger value="tables">분석 테이블</TabsTrigger>
+                <TabsTrigger value="chart">차트 생성하기</TabsTrigger>
+              </TabsList>
+            </div>
           </div>
 
-          <TabsContent className="mt-0 grid min-h-0 min-w-0 grid-rows-[max-content_minmax(0,1fr)] gap-3 overflow-hidden" value="tables">
+          <TabsContent className="mt-0 grid min-h-0 min-w-0 grid-rows-[max-content_minmax(0,1fr)] gap-3 overflow-hidden px-4 pb-4" value="tables">
             <FilterToolbarSearch icon={<Search size={15} />} size="compact">
               <FilterToolbarInput
                 aria-label="분석 테이블 검색"
@@ -108,8 +115,8 @@ export function SqlDatasetContextPanel({
               <FieldTitle>데이터셋</FieldTitle>
               <div className="relative min-h-0 overflow-hidden">
                 <Panel asChild>
-                  <ScrollArea className={`${styles.datasetScroll} min-h-0`} style={{ inset: 0, position: "absolute" }} type="always">
-                    <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
+                  <div className="absolute inset-0 min-h-0 overflow-hidden">
+                    <div className="h-full min-w-0 pr-1" ref={contextListRef}>
                       <SqlDatasetTree
                         datasets={pageDatasets}
                         expandedDatasetId={expandedDatasetId}
@@ -126,7 +133,7 @@ export function SqlDatasetContextPanel({
                         </Empty>
                       )}
                     </div>
-                  </ScrollArea>
+                  </div>
                 </Panel>
               </div>
               {filteredDatasetCount > contextPageSize && (
@@ -144,7 +151,7 @@ export function SqlDatasetContextPanel({
             </section>
           </TabsContent>
 
-          <TabsContent className={`${styles.chartConfigurator} mt-0 min-w-0`} value="chart">
+          <TabsContent className={`${styles.chartConfigurator} mt-0 min-w-0 px-4 pb-4`} value="chart">
             <SqlChartConfigurator
               initialConfig={chartConfig}
               onApply={onApplyChartConfig}

@@ -91,8 +91,20 @@ async function deleteKafkaFixture(topic) {
 async function verifyAllSources() {
   const defaults = await get("/api/etl/sources/defaults");
   const expectedBroker = process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092";
+  const expectedTopic = process.env.ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC || process.env.ASKLAKE_KAFKA_TOPIC || "asklake-source-events";
+  const expectedS3Bucket = process.env.ASKLAKE_SOURCE_DEFAULT_S3_BUCKET || process.env.ASKLAKE_RAW_BUCKET || "";
+  const expectedS3Prefix = process.env.ASKLAKE_SOURCE_DEFAULT_S3_PREFIX || "";
   if (defaults.kafkaBroker !== expectedBroker) {
     throw new Error(`Source defaults broker mismatch: expected ${expectedBroker}, got ${defaults.kafkaBroker}.`);
+  }
+  if (defaults.kafkaTopic !== expectedTopic) {
+    throw new Error(`Source defaults topic mismatch: expected ${expectedTopic}, got ${defaults.kafkaTopic}.`);
+  }
+  if (defaults.s3Bucket !== expectedS3Bucket) {
+    throw new Error(`Source defaults S3 bucket mismatch: expected ${expectedS3Bucket}, got ${defaults.s3Bucket}.`);
+  }
+  if (defaults.s3Prefix !== expectedS3Prefix) {
+    throw new Error(`Source defaults S3 prefix mismatch: expected ${expectedS3Prefix}, got ${defaults.s3Prefix}.`);
   }
   console.log("Source connector defaults: ok");
   await verify("File / S3 CSV", objectStorageConfig("asklake-fixtures/csv/"));
@@ -105,19 +117,29 @@ async function verifyAllSources() {
     ["Endpoint URL", `${restFixtureUrl}/events`],
     ["Accept", "application/json"],
   ]);
-  await verify("PostgreSQL", [
+  const postgresConnection = [
     ["Endpoint / Host", "127.0.0.1"],
     ["Port", process.env.ASKLAKE_SOURCE_PGPORT || "15432"],
     ["Database Name", "asklake_sources"],
     ["Schema", "public"],
     ["Username", "asklake"],
     ["Password / Auth Token", process.env.ASKLAKE_SOURCE_PGPASSWORD || "asklake"],
+  ];
+  await verifyDiscovery("PostgreSQL", postgresConnection, "nyc_taxi_sample");
+  await verifySelectionRequired("PostgreSQL", postgresConnection);
+  await verify("PostgreSQL", [
+    ...postgresConnection,
     ["DATASET OR TABLE SELECTOR", "nyc_taxi_sample"],
   ]);
-  await verify("MongoDB", [
+  const mongoConnection = [
     ["Endpoint / Host", "127.0.0.1"],
     ["Port", process.env.ASKLAKE_MONGO_PORT || "27018"],
     ["Database Name", "asklake_sources"],
+  ];
+  await verifyDiscovery("MongoDB", mongoConnection, "app_events");
+  await verifySelectionRequired("MongoDB", mongoConnection);
+  await verify("MongoDB", [
+    ...mongoConnection,
     ["DATASET OR TABLE SELECTOR", "app_events"],
   ]);
   await verify("Data Lake Parquet", [
@@ -159,6 +181,27 @@ async function verify(sourceType, sourceConfig, assertResult = (result) => resul
   if (result.status !== "success") throw new Error(`${sourceType} did not return success.`);
   if (!assertResult(result)) throw new Error(`${sourceType} returned no expected metadata.`);
   console.log(`${sourceType}: ok`);
+}
+
+async function verifyDiscovery(sourceType, sourceConfig, expectedAsset) {
+  const result = await post("/api/etl/sources/assets", { prefix: "", sourceConfig, sourceType });
+  if (!result.assets?.some(([name]) => name === expectedAsset)) {
+    throw new Error(`${sourceType} discovery did not include ${expectedAsset}.`);
+  }
+  console.log(`${sourceType} discovery: ok`);
+}
+
+async function verifySelectionRequired(sourceType, sourceConfig) {
+  try {
+    await post("/api/etl/sources/test", { sourceConfig, sourceType });
+  } catch (error) {
+    if (/400/.test(String(error))) {
+      console.log(`${sourceType} selection guard: ok`);
+      return;
+    }
+    throw error;
+  }
+  throw new Error(`${sourceType} preview unexpectedly succeeded without a selected target.`);
 }
 
 function ensureFastApiPythonDependencies() {

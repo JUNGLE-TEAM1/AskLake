@@ -60,11 +60,11 @@ export default function InlineAIInput({
 
     // Only render the panel (button is controlled by parent)
     return (
-        <div className="mb-2 p-3 bg-gradient-to-r from-indigo-50/50 to-purple-50/50 rounded-xl border border-indigo-200/50">
+        <div className="mb-2 rounded-xl border border-blue-200 bg-blue-50/70 p-3">
             <form onSubmit={handleSubmit} className="space-y-2">
                 {/* Input field with icon and Generate button in same row */}
                 <div className="flex items-center gap-2">
-                    <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
+                    <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-blue-600">
                         <Sparkles size={14} className="text-white" />
                     </div>
                     <input
@@ -74,16 +74,16 @@ export default function InlineAIInput({
                         placeholder={placeholder}
                         disabled={isLoading}
                         autoFocus
-                        className="flex-1 px-3 py-2 border border-indigo-200 rounded-lg text-sm
-                            focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent
+                        className="flex-1 rounded-lg border border-blue-200 px-3 py-2 text-sm
+                            focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500
                             disabled:bg-gray-50 disabled:text-gray-400
                             placeholder:text-gray-400"
                     />
                     <button
                         type="submit"
                         disabled={isLoading || !input.trim()}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600
-                            hover:bg-indigo-700 disabled:bg-gray-300
+                        className="flex items-center gap-1.5 bg-blue-600 px-3 py-2
+                            hover:bg-blue-700 disabled:bg-gray-300
                             text-white rounded-lg text-sm font-medium transition-colors
                             disabled:cursor-not-allowed whitespace-nowrap"
                     >

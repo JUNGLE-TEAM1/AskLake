@@ -1,11 +1,10 @@
 import { useMemo } from "react";
 import type { ColumnDef, SortingFn } from "@tanstack/react-table";
-import { Table2 } from "lucide-react";
+import { SqlPageIcon as Table2 } from "./SqlPageIcon";
 
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { cn } from "@/lib/utils";
 import type { SqlResultDraft } from "../../types";
-import { SQL_RESULT_PAGE_SIZE } from "./sqlLogic";
 import styles from "./SqlPreviewTable.module.css";
 
 type SqlPreviewRow = {
@@ -26,6 +25,10 @@ function getColumnKind(rows: string[][], index: number): SqlPreviewCellKind {
   if (values.every((value) => getCellKind(value) === "number")) return "number";
   if (values.every((value) => getCellKind(value) === "date")) return "date";
   return "text";
+}
+
+function isIdentifierColumn(column: string) {
+  return /(?:^|[_\s-])id$/i.test(column.trim());
 }
 
 function toComparableValue(value: string, kind: SqlPreviewCellKind) {
@@ -54,12 +57,13 @@ function buildSqlSortingFn(kind: SqlPreviewCellKind): SortingFn<SqlPreviewRow> {
   };
 }
 
-export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
+export function SqlPreviewTable({ isLoading = false, resultDraft }: { isLoading?: boolean; resultDraft: SqlResultDraft }) {
   const columns = useMemo<ColumnDef<SqlPreviewRow>[]>(
     () => resultDraft.columns.map((column, index) => {
       const columnKind = getColumnKind(resultDraft.rows, index);
+      const identifierColumn = isIdentifierColumn(column);
       const meta: DataTableColumnMeta = {
-        align: columnKind === "number" ? "right" : "left",
+        align: columnKind === "number" && !identifierColumn ? "right" : "left",
         cellClassName: columnKind === "number" || columnKind === "date" ? "tabular-nums" : undefined,
       };
 
@@ -93,8 +97,10 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
         icon: <Table2 size={18} />,
         title: "SQL preview 결과가 비어 있습니다.",
       }}
-      pagination={{ label: "SQL preview", pageSize: SQL_RESULT_PAGE_SIZE }}
-      resetPaginationKey={resultDraft.runId}
+      isLoading={isLoading}
+      loadingRowCount={8}
+      pagination={false}
+      resetPaginationKey={`${resultDraft.runId}:${resultDraft.pageOffset ?? 0}`}
       tableClassName={cn("schema-table", styles.table)}
       viewportClassName="overflow-visible"
     />

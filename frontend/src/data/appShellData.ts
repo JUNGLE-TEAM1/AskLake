@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, Bot, Database, Settings, TerminalSquare } from "lucide-react";
+import { BarChart3, BookOpen, Database, Settings, TerminalSquare } from "lucide-react";
 import type { FlowId, NavItem } from "../types";
 
 export const steps = ["소스", "처리", "스케줄", "권한", "타겟", "검토"];
@@ -13,7 +13,6 @@ export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> =
   { id: "rules", label: "변환 규칙", stepIndex: 1 },
   { id: "repeat", label: "반복 실행", stepIndex: 2 },
   { id: "manual", label: "수동 실행", stepIndex: 2 },
-  { id: "once", label: "1회 실행", stepIndex: 2 },
   { id: "target", label: "타겟 설정", stepIndex: 4 },
   { id: "permission", label: "권한 설정", stepIndex: 3 },
   { id: "review", label: "검토 및 생성", stepIndex: 5 },
@@ -26,7 +25,6 @@ export const navItems = [
   { id: "catalog", label: "검색/카탈로그", icon: BookOpen, flow: "catalog" },
   { id: "sql", label: "SQL 분석", icon: TerminalSquare, flow: "sql" },
   { id: "dashboard", label: "대시보드", icon: BarChart3, flow: "dashboard" },
-  { id: "ai", label: "AI 활용", icon: Bot, flow: "ai" },
   { id: "admin", label: "관리", icon: Settings, flow: "admin" },
 ] satisfies NavItem[];
 
@@ -104,12 +102,6 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["실패 재시도", "기본 정책"],
     ["상태", "대기"],
   ],
-  once: [
-    ["실행 방식", "1회 실행"],
-    ["실행 시각", "설정 전"],
-    ["실패 재시도", "기본 정책"],
-    ["상태", "예약 전"],
-  ],
   target: [
     ["저장소", "S3 Gold"],
     ["포맷", "Parquet"],
@@ -151,13 +143,6 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["상태", "통합 예정"],
     ["입력", "SQL 결과"],
     ["출력", "Published Dashboard"],
-  ],
-  ai: [
-    ["해당 영역", "AI 활용"],
-    ["표시 기능", "RAG / AI 질의"],
-    ["상태", "아직 연결 없음"],
-    ["입력", "Lake 데이터셋"],
-    ["권한", "사용자별 접근 제어"],
   ],
   admin: [
     ["해당 영역", "관리"],

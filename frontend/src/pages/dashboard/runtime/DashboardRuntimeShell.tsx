@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Check, Copy, Database } from "lucide-react";
+import { Check, Copy, Database, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -15,6 +15,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
+import type { DashboardAutoRefreshStatus } from "./dashboardAutoRefresh";
 
 type DashboardPageTab = {
   id: string;
@@ -27,11 +28,15 @@ type RuntimeNotice = {
 };
 
 export function DashboardRuntimeShell({
+  autoRefreshEnabled,
+  autoRefreshError,
+  autoRefreshStatus,
   children,
   datasetSidebar,
   datasetSidebarOpen = false,
   hasPublishedRevision,
   inspector,
+  inspectorOpen = false,
   isAddingPage,
   isPublishing,
   isRenamingTitle,
@@ -39,6 +44,7 @@ export function DashboardRuntimeShell({
   mode,
   notice,
   onAddPage,
+  onAutoRefreshChange,
   onCloseSharePanel,
   onDeletePage,
   onOpenDraft,
@@ -50,17 +56,22 @@ export function DashboardRuntimeShell({
   onSelectPage,
   onShare,
   onToggleDatasetSidebar,
+  onToggleInspector,
   pages,
   renamingPageId,
   selectedPageId,
   shareLink,
   title,
 }: {
+  autoRefreshEnabled: boolean;
+  autoRefreshError?: string | null;
+  autoRefreshStatus: DashboardAutoRefreshStatus;
   children: ReactNode;
   datasetSidebar?: ReactNode;
   datasetSidebarOpen?: boolean;
   hasPublishedRevision?: boolean;
   inspector?: ReactNode;
+  inspectorOpen?: boolean;
   isAddingPage?: boolean;
   isPublishing?: boolean;
   isRenamingTitle?: boolean;
@@ -68,6 +79,7 @@ export function DashboardRuntimeShell({
   mode: "published" | "draft";
   notice?: RuntimeNotice | null;
   onAddPage?: () => void;
+  onAutoRefreshChange: (enabled: boolean) => void;
   onCloseSharePanel?: () => void;
   onDeletePage?: (pageId: string) => void;
   onOpenDraft?: () => void;
@@ -79,6 +91,7 @@ export function DashboardRuntimeShell({
   onSelectPage: (pageId: string) => void;
   onShare?: () => void;
   onToggleDatasetSidebar?: () => void;
+  onToggleInspector?: () => void;
   pages: DashboardPageTab[];
   renamingPageId?: string | null;
   selectedPageId: string | null;
@@ -88,6 +101,7 @@ export function DashboardRuntimeShell({
   const [copyFeedback, setCopyFeedback] = useState<"idle" | "success" | "error">("idle");
   const hasDatasetSidebar = Boolean(datasetSidebar);
   const canToggleDatasetSidebar = hasDatasetSidebar && Boolean(onToggleDatasetSidebar);
+  const canToggleInspector = Boolean(onToggleInspector);
   const workspaceClassName = [
     "asklake-dashboard-workspace",
     hasDatasetSidebar && "has-dataset-sidebar",
@@ -130,6 +144,9 @@ export function DashboardRuntimeShell({
   return (
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
+        autoRefreshEnabled={autoRefreshEnabled}
+        autoRefreshError={autoRefreshError}
+        autoRefreshStatus={autoRefreshStatus}
         hasPublishedRevision={hasPublishedRevision}
         isPublishing={isPublishing}
         isRenaming={isRenamingTitle}
@@ -137,6 +154,7 @@ export function DashboardRuntimeShell({
         mode={mode}
         title={title}
         onOpenDraft={onOpenDraft}
+        onAutoRefreshChange={onAutoRefreshChange}
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
@@ -150,6 +168,15 @@ export function DashboardRuntimeShell({
           variant={notice.tone === "error" ? "destructive" : "default"}
         >
           <AlertDescription>{notice.message}</AlertDescription>
+        </Alert>
+      )}
+      {autoRefreshEnabled && autoRefreshError && (
+        <Alert
+          className="asklake-dashboard-runtime-notice error"
+          role="status"
+          variant="destructive"
+        >
+          <AlertDescription>{autoRefreshError}</AlertDescription>
         </Alert>
       )}
       <Sheet
@@ -223,6 +250,21 @@ export function DashboardRuntimeShell({
               onRenamePage={onRenamePage}
               onSelectPage={onSelectPage}
             />
+          ) : null}
+          {canToggleInspector ? (
+            <Button
+              aria-controls="asklake-dashboard-inspector"
+              aria-expanded={inspectorOpen}
+              aria-label={inspectorOpen ? "오른쪽 설정 패널 접기" : "오른쪽 설정 패널 열기"}
+              className="asklake-dashboard-inspector-toggle"
+              size="sm"
+              type="button"
+              variant="ghost"
+              onClick={onToggleInspector}
+            >
+              {inspectorOpen ? <PanelRightClose /> : <PanelRightOpen />}
+              설정
+            </Button>
           ) : null}
         </div>
       </div>

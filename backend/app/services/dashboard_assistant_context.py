@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.auth_context import ActorContext
+from app.core.errors import ApiError
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
@@ -12,7 +14,9 @@ from app.schemas.dashboard import (
     DashboardRuntimeWidgetType,
 )
 from app.services.dashboard_assistant_options import widget_options_payload
+from app.services.dashboard_dataset_access import require_dashboard_dataset_query_access
 from app.services.dashboard_runtime_service import DashboardRuntimeService
+from app.services.resource_permission_service import datasets_with_persisted_permission_grants
 
 
 @dataclass(frozen=True)
@@ -107,12 +111,16 @@ def build_assistant_context(
     runtime_repository: DashboardRuntimeRepository,
     catalog_repository: CatalogRepository,
     *,
+    actor: ActorContext,
     max_sample_rows: int,
 ) -> AssistantDashboardContext:
-    datasets = _available_dataset_contexts(catalog_repository, max_sample_rows)
+    datasets = _available_dataset_contexts(catalog_repository, actor, max_sample_rows)
     dashboard_id = request.dashboard_id
     if not dashboard_id:
-        return _request_fallback_context(request, datasets)
+        allowed_dataset_ids = {dataset.id for dataset in datasets}
+        return _request_fallback_context(request, datasets, allowed_dataset_ids)
+
+    allowed_dataset_ids = {dataset.id for dataset in datasets}
 
     dashboard_meta = runtime_repository.get_dashboard_meta(dashboard_id)
     revision = (
@@ -120,11 +128,15 @@ def build_assistant_context(
         or runtime_repository.get_published_revision(dashboard_id)
     )
     if revision is None:
+        scoped_datasets, scope_warnings = _scope_datasets_for_request(request, datasets, [])
         return AssistantDashboardContext(
             id=dashboard_id,
             title=dashboard_meta.title if dashboard_meta else None,
-            datasets=datasets,
-            warnings=["대시보드 draft/published revision을 찾지 못해 위젯 컨텍스트 없이 진행합니다."],
+            datasets=scoped_datasets,
+            warnings=[
+                "대시보드 draft/published revision을 찾지 못해 위젯 컨텍스트 없이 진행합니다.",
+                *scope_warnings,
+            ],
         )
 
     pages = runtime_repository.list_pages(revision.id)
@@ -133,6 +145,8 @@ def build_assistant_context(
     widgets_by_page_id = runtime_repository.list_widgets_by_page_ids(page_ids)
     selected_page_widgets = widgets_by_page_id.get(selected_page.id, []) if selected_page else []
     target_widgets, target_warnings = _filter_widgets_for_target(selected_page_widgets, request)
+    target_widgets = _filter_widgets_for_dataset_access(target_widgets, allowed_dataset_ids)
+    scoped_datasets, scope_warnings = _scope_datasets_for_request(request, datasets, target_widgets)
 
     return AssistantDashboardContext(
         id=dashboard_id,
@@ -141,14 +155,15 @@ def build_assistant_context(
             id=selected_page.id if selected_page else request.page_id,
             title=selected_page.title if selected_page else None,
         ),
-        datasets=datasets,
+        datasets=scoped_datasets,
         widgets=[
             _widget_model_to_context(widget, max_sample_rows)
             for widget in target_widgets
         ],
         warnings=[
             *target_warnings,
-            *([] if datasets else ["대시보드에서 사용할 수 있는 데이터셋을 찾지 못했습니다."]),
+            *scope_warnings,
+            *([] if scoped_datasets else ["대시보드에서 사용할 수 있는 데이터셋을 찾지 못했습니다."]),
         ],
     )
 
@@ -161,6 +176,53 @@ def _select_page(pages: list[Any], page_id: str | None) -> Any | None:
 
 def _target_widget_id(request: DashboardAssistantRequest) -> str | None:
     return request.widget_id or request.selected_widget_id
+
+
+def _scope_datasets_for_request(
+    request: DashboardAssistantRequest,
+    datasets: list[AssistantDatasetContext],
+    widgets: list[Any],
+) -> tuple[list[AssistantDatasetContext], list[str]]:
+    """Prioritize explicitly selected datasets without dropping other authorized datasets."""
+
+    explicit_dataset_ids = list(dict.fromkeys(
+        dataset_id.strip()
+        for dataset_id in request.selected_dataset_ids
+        if dataset_id.strip()
+    ))
+    requested_dataset_ids: list[str] = list(explicit_dataset_ids)
+    if not explicit_dataset_ids and request.current_dataset_id:
+        requested_dataset_ids.append(request.current_dataset_id)
+
+    if _target_widget_id(request):
+        requested_dataset_ids.extend(
+            str(dataset_id)
+            for widget in widgets
+            if (dataset_id := getattr(widget, "dataset_id", None))
+        )
+
+    requested_dataset_ids = list(dict.fromkeys(requested_dataset_ids))
+    dataset_by_id = {dataset.id: dataset for dataset in datasets}
+    prioritized_datasets = [
+        dataset_by_id[dataset_id]
+        for dataset_id in requested_dataset_ids
+        if dataset_id in dataset_by_id
+    ]
+    prioritized_ids = {dataset.id for dataset in prioritized_datasets}
+    scoped_datasets = prioritized_datasets if explicit_dataset_ids else [
+        *prioritized_datasets,
+        *(dataset for dataset in datasets if dataset.id not in prioritized_ids),
+    ]
+    missing_dataset_ids = [
+        dataset_id
+        for dataset_id in requested_dataset_ids
+        if dataset_id not in dataset_by_id
+    ]
+    warnings = [
+        f"요청 데이터셋 {dataset_id!r}을 사용할 수 없어 AI 컨텍스트에서 제외했습니다."
+        for dataset_id in missing_dataset_ids
+    ]
+    return scoped_datasets, warnings
 
 
 def _filter_widgets_for_target(
@@ -186,9 +248,10 @@ def _filter_widgets_for_target(
 
 def _available_dataset_contexts(
     catalog_repository: CatalogRepository,
+    actor: ActorContext,
     max_sample_rows: int,
 ) -> list[AssistantDatasetContext]:
-    contexts: list[AssistantDatasetContext] = []
+    datasets: list[CatalogDatasetResponse] = []
     for model in catalog_repository.list_dataset_models():
         try:
             dataset = CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
@@ -196,6 +259,23 @@ def _available_dataset_contexts(
             continue
         if dataset.status != "available" or not dataset.schema_:
             continue
+        datasets.append(dataset)
+
+    datasets = datasets_with_persisted_permission_grants(catalog_repository.db, datasets)
+    contexts: list[AssistantDatasetContext] = []
+    for dataset in datasets:
+        try:
+            require_dashboard_dataset_query_access(
+                catalog_repository.db,
+                actor,
+                dataset,
+                api_path="/api/dashboards/assistant",
+                http_method="POST",
+            )
+        except ApiError as exc:
+            if exc.status_code in {401, 403}:
+                continue
+            raise
         contexts.append(_dataset_to_context(dataset, max_sample_rows))
     return contexts
 
@@ -264,18 +344,34 @@ def _widget_model_to_context(
 def _request_fallback_context(
     request: DashboardAssistantRequest,
     datasets: list[AssistantDatasetContext],
+    allowed_dataset_ids: set[str],
 ) -> AssistantDashboardContext:
     request_widgets, target_warnings = _filter_widgets_for_target(request.widgets, request)
+    request_widgets = _filter_widgets_for_dataset_access(request_widgets, allowed_dataset_ids)
+    scoped_datasets, scope_warnings = _scope_datasets_for_request(request, datasets, request_widgets)
     return AssistantDashboardContext(
         id=request.dashboard_id,
         page=AssistantPageContext(id=request.page_id),
-        datasets=datasets,
+        datasets=scoped_datasets,
         widgets=[_request_widget_to_context(widget) for widget in request_widgets],
         warnings=[
             "dashboardId가 없어 요청 payload의 widgets만 사용합니다.",
             *target_warnings,
+            *scope_warnings,
         ],
     )
+
+
+def _filter_widgets_for_dataset_access(
+    widgets: list[Any],
+    allowed_dataset_ids: set[str],
+) -> list[Any]:
+    return [
+        widget
+        for widget in widgets
+        if not getattr(widget, "dataset_id", None)
+        or getattr(widget, "dataset_id", None) in allowed_dataset_ids
+    ]
 
 
 def _request_widget_to_context(widget: DashboardAssistantWidgetContext) -> AssistantWidgetContext:

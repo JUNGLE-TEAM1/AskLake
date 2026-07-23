@@ -1,0 +1,19 @@
+{
+  "contractVersion": "1.1",
+  "environment": "dev",
+  "gitRevision": "0000000000000000000000000000000000000000",
+  "platform": "linux/amd64",
+  "images": {
+    "frontend": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/frontend@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "backend": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "aiGateway": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/ai-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "airflow": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/airflow@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "sparkRuntime": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/spark-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "trino": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/trino@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "upstreamImages": {
+    "airflow": "apache/airflow:3.3.0",
+    "trino": "trinodb/trino:482"
+  },
+  "createdAt": "1970-01-01T00:00:00.000Z"
+}

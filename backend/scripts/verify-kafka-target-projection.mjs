@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 
-import { buildKafkaTargetSchema, projectKafkaTargetRecord } from "../src/kafkaTargetProjection.mjs";
+import {
+  buildKafkaTargetSchema,
+  parseKafkaSnapshotRecord,
+  projectKafkaTargetRecord,
+  usesLegacyReviewContract,
+} from "../src/kafkaTargetProjection.mjs";
 import { applySnapshotRules } from "../src/snapshotRuleRuntime.mjs";
 
 const rules = [{
@@ -38,6 +43,66 @@ assert.deepEqual(targetSchema.map((column) => column.targetName), ["event_id", "
 assert.deepEqual(projected, { event_id: "review-1", review_clean: "Hello Lake" });
 assert.equal(Object.hasOwn(projected, "review"), false);
 assert.equal(Object.hasOwn(projected, "raw"), false);
+
+const genericSchemaColumns = [
+  { included: true, nullable: false, sourceName: "event_id", targetName: "event_id", type: "String" },
+  { included: true, nullable: false, sourceName: "payload.device", targetName: "payload_device", type: "String" },
+];
+assert.equal(usesLegacyReviewContract(genericSchemaColumns), false);
+const genericParsed = parseKafkaSnapshotRecord(JSON.stringify({
+  event_id: "event-1",
+  payload: { device: "ios" },
+}), { offset: "9", partition: 0, topic: "events.raw" }, genericSchemaColumns);
+assert.equal(genericParsed.valid, true);
+assert.deepEqual(
+  projectKafkaTargetRecord(genericParsed.record, buildKafkaTargetSchema({ schemaColumns: genericSchemaColumns })),
+  { event_id: "event-1", payload_device: "ios" },
+);
+
+const rawRecordParsing = {
+  enabled: true,
+  delimiterKind: "whitespace",
+  delimiterPattern: "\\s+",
+  expectedFieldCount: 4,
+  header: false,
+  columns: [
+    { position: 0, name: "event_time", inferredType: "Timestamp" },
+    { position: 1, name: "event_id", inferredType: "String" },
+    { position: 2, name: "position", inferredType: "Integer" },
+    { position: 3, name: "active", inferredType: "Boolean" },
+  ],
+};
+const rawParsed = parseKafkaSnapshotRecord(
+  "2026-06-12T10:01:27+09:00 EVT-0001 3 true",
+  { offset: "11", partition: 0, topic: "click-events.log" },
+  [],
+  rawRecordParsing,
+);
+assert.equal(rawParsed.valid, true);
+assert.deepEqual(rawParsed.record, {
+  active: true,
+  event_id: "EVT-0001",
+  event_time: "2026-06-12T10:01:27+09:00",
+  position: 3,
+});
+const invalidRawParsed = parseKafkaSnapshotRecord(
+  "2026-06-12T10:01:27+09:00 EVT-0001",
+  { offset: "12", partition: 0, topic: "click-events.log" },
+  [],
+  rawRecordParsing,
+);
+assert.equal(invalidRawParsed.valid, false);
+assert.equal(invalidRawParsed.error.reason, "record_field_count_mismatch");
+
+assert.equal(usesLegacyReviewContract([]), true);
+const invalidLegacyReview = parseKafkaSnapshotRecord(
+  JSON.stringify({ event_id: "review-2" }),
+  { offset: "10", partition: 0, topic: "reviews.raw" },
+  [],
+);
+assert.equal(invalidLegacyReview.valid, false);
+assert.equal(invalidLegacyReview.error.reason, "missing_required_field");
+assert.equal(invalidLegacyReview.error.field, "offset");
 
 const authoritativeOutputSchema = buildKafkaTargetSchema({
   outputSchema,

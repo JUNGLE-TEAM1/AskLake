@@ -21,8 +21,8 @@ PR merge to dev
 
 ## 전제 조건
 
-- `main`, `dev`, `pair1`, `pair2`, `pair3`는 protected branch다.
-- `dev` PR은 `pair1`, `pair2`, `pair3`에서만 들어갈 수 있다.
+- `main`과 `dev`는 protected branch다. 기존 pair branch 보호 여부는 repository ruleset을 따른다.
+- `dev` 변경은 승인된 task/work branch의 PR로만 들어가며 배포용 pair branch를 별도로 유지하지 않는다.
 - 배포 workflow는 `dev` 업데이트를 기준으로 한다.
 - 실제 AWS credential, domain, IP, secret 값은 문서나 repo에 기록하지 않는다.
 - 서버의 실제 `.env`는 EC2에만 둔다.
@@ -461,12 +461,11 @@ backend/src/sparkRunner.mjs
 
 Spark runner 주의:
 
-- 현재 ETL Job command 경로는 backend에서 Node bridge를 거쳐 Docker 기반 Spark 컨테이너를 실행한다.
-- backend image에는 Node dependencies와 Docker CLI를 포함한다.
-- compose는 `/var/run/docker.sock`을 backend에 mount한다.
-- EC2에서는 repo 기준 경로가 `ASKLAKE_SPARK_HOST_SCRIPTS_DIR`와 일치해야 한다.
-- 기본 문서 기준은 `/opt/asklake/backend/scripts`이며, repo clone 위치가 다르면 서버 `deploy/.env`에서 바꾼다.
-- Spark job E2E는 Phase 8 QA에서 별도로 검증한다.
+- 이 마일스톤의 Docker launcher 기록은 local 개발 호환 경로에만 해당한다.
+- 현재 production Compose는 application scripts를 Spark runtime image에 포함하고 Standalone REST create/status API를 사용한다.
+- backend image에는 Docker CLI나 `/var/run/docker.sock` mount가 없다.
+- 공유 report/output/sample/Ivy 경로는 재시작 가능한 `spark-runtime-guard`가 기존 데이터를 보존하며 UID/GID `185:185`로 준비하고 worker/backend startup probe가 실제 접근을 검증한다.
+- Spark job E2E는 Phase 8 QA와 production-like REST smoke에서 별도로 검증한다.
 
 검증 명령:
 
@@ -814,7 +813,7 @@ MONGO_URL=mongodb://...
 | CORS 문제 | frontend API 실패 | `BACKEND_CORS_ORIGINS` 고정 |
 | HTTPS 발급 실패 | 외부 접속 실패 | DNS/80/443 확인 |
 | empty preview | 데모 설득력 저하 | fixture sample rows 보장 |
-| branch policy 실패 | PR merge 불가 | `dev <- pair1|pair2|pair3` 준수 |
+| branch policy 실패 | PR merge 불가 | 승인된 task/work branch → `dev`, `dev` → `main` PR 흐름 준수 |
 | direct push 차단 | 배포 branch 갱신 실패 | PR 기반 흐름 준수 |
 
 ## Definition of Done

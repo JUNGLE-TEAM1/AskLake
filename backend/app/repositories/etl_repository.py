@@ -1,7 +1,12 @@
+from typing import Any
+
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
+from app.core.compatibility import record_legacy_runtime_error_projection
+from app.core.config import settings
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.domain.continuous_runtime import runtime_contract_projection
 from app.models import (
     CatalogDatasetModel,
     ETLJobModel,
@@ -14,6 +19,7 @@ from app.models import (
 )
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
+from app.repositories import etl_job_list_repository
 from app.schemas.etl import (
     CatalogDataset,
     ContinuousMaintenanceRun,
@@ -32,6 +38,9 @@ def ensure_schema(db: Session) -> None:
     bind = db.get_bind()
     bind_key = id(bind)
     if bind_key in _schema_ready_bind_ids:
+        return
+    if not settings.startup_schema_management_enabled:
+        _schema_ready_bind_ids.add(bind_key)
         return
 
     with bind.begin() as connection:
@@ -57,6 +66,8 @@ def ensure_schema(db: Session) -> None:
             "partition": "VARCHAR(255)",
             "partition_columns": "JSON",
             "index_columns": "JSON",
+            "iceberg_target": "JSON",
+            "job_kind": "VARCHAR(64)",
             "permission_roles": "JSON",
             "permission_summary": "TEXT",
             "progress": "JSON",
@@ -83,6 +94,7 @@ def ensure_schema(db: Session) -> None:
             "source_config": "JSON",
             "source_label": "VARCHAR(255)",
             "source_type": "VARCHAR(120)",
+            "sql_recipe": "JSON",
             "stats": "JSON",
             "status": "VARCHAR(64)",
             "storage_path": "VARCHAR(512)",
@@ -117,16 +129,21 @@ def ensure_schema(db: Session) -> None:
             "status": "VARCHAR(32)",
             "last_error": "TEXT",
             "dag_steps": "JSON",
+            "source_boundary": "JSON",
+            "iceberg_snapshot_id": "VARCHAR(255)",
+            "iceberg_table_uri": "VARCHAR(1024)",
         }
         for column_name, column_type in batch_column_defs.items():
             if column_name not in batch_columns:
                 connection.execute(text(f"ALTER TABLE kafka_continuous_batches ADD COLUMN {column_name} {column_type}"))
         connection.execute(text("UPDATE kafka_continuous_batches SET status = 'success' WHERE status IS NULL"))
         connection.execute(text("UPDATE kafka_continuous_batches SET dag_steps = '[]' WHERE dag_steps IS NULL"))
+        connection.execute(text("UPDATE kafka_continuous_batches SET source_boundary = '{}' WHERE source_boundary IS NULL"))
 
         job_defaults = {
             "dag_steps": "[]",
             "execution_mode": "snapshot",
+            "job_kind": "pipeline",
             "last_run": "-",
             "last_state": "대기",
             "name": "Untitled ETL Job",
@@ -161,6 +178,7 @@ def ensure_schema(db: Session) -> None:
                 "schema_columns",
                 "schema_sample_rows",
                 "source_config",
+                "sql_recipe",
                 "stats",
                 "transform_output_columns",
                 "transform_steps",
@@ -202,7 +220,25 @@ def ensure_schema(db: Session) -> None:
 def list_jobs(db: Session) -> list[JobRowData]:
     ensure_schema(db)
     jobs = db.scalars(select(ETLJobModel).order_by(ETLJobModel.created_at.desc())).all()
-    return [job_to_schema(db, job) for job in jobs]
+    job_ids = [job.id for job in jobs]
+    continuous_runtime_by_job_id = etl_job_list_repository.list_continuous_runtimes(
+        db,
+        [job.id for job in jobs if job.execution_mode == "continuous"],
+    )
+    run_models_by_job_id = etl_job_list_repository.list_latest_run_models(db, job_ids)
+    return [
+        job_to_schema(
+            db,
+            job,
+            continuous_runtime=continuous_runtime_by_job_id.get(job.id),
+            related_loaded=True,
+            run_history=[
+                run_to_schema(run)
+                for run in run_models_by_job_id.get(job.id, [])
+            ],
+        )
+        for job in jobs
+    ]
 
 
 def list_job_models(db: Session) -> list[ETLJobModel]:
@@ -213,6 +249,26 @@ def list_job_models(db: Session) -> list[ETLJobModel]:
 def get_job(db: Session, job_id: str) -> ETLJobModel | None:
     ensure_schema(db)
     return db.get(ETLJobModel, job_id)
+
+
+def get_job_for_update(db: Session, job_id: str) -> ETLJobModel | None:
+    ensure_schema(db)
+    statement = (
+        select(ETLJobModel)
+        .where(ETLJobModel.id == job_id)
+        .with_for_update()
+    )
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite ignores SELECT FOR UPDATE. A no-op write takes its database-level
+        # writer lock before any external side effect while preserving row values.
+        result = db.execute(
+            text("UPDATE etl_jobs SET id = id WHERE id = :job_id"),
+            {"job_id": job_id},
+        )
+        if result.rowcount == 0:
+            return None
+        return db.get(ETLJobModel, job_id, populate_existing=True)
+    return db.scalar(statement)
 
 
 def get_job_schema(db: Session, job_id: str) -> JobRowData | None:
@@ -239,11 +295,15 @@ def get_dataset_by_id(db: Session, dataset_id: str) -> CatalogDatasetModel | Non
 
 def get_dataset_by_id_for_update(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
     ensure_schema(db)
-    return db.scalar(
+    model = db.scalar(
         select(CatalogDatasetModel)
         .where(CatalogDatasetModel.id == dataset_id)
         .with_for_update()
     )
+    from app.repositories.catalog_deletion_repository import ensure_catalog_publication_allowed
+
+    ensure_catalog_publication_allowed(db, dataset_id)
+    return model
 
 
 def get_dataset_by_name(db: Session, name: str) -> CatalogDatasetModel | None:
@@ -266,6 +326,7 @@ def get_dataset_schema_by_id(db: Session, dataset_id: str) -> CatalogDataset | N
 
 def create_job_and_dataset(db: Session, job: ETLJobModel, dataset: CatalogDatasetModel) -> tuple[JobRowData, CatalogDataset]:
     ensure_schema(db)
+    get_dataset_by_id_for_update(db, dataset.id)
     db.add(dataset)
     db.add(job)
     db.commit()
@@ -276,6 +337,7 @@ def create_job_and_dataset(db: Session, job: ETLJobModel, dataset: CatalogDatase
 
 def save_dataset(db: Session, dataset: CatalogDatasetModel) -> CatalogDataset:
     ensure_schema(db)
+    get_dataset_by_id_for_update(db, dataset.id)
     dataset = db.merge(dataset)
     try:
         db.commit()
@@ -293,6 +355,8 @@ def save_command_result(
     dataset: CatalogDatasetModel | None = None,
 ) -> tuple[JobRowData, JobRunSummary | None, CatalogDataset | None]:
     ensure_schema(db)
+    if dataset is not None:
+        get_dataset_by_id_for_update(db, dataset.id)
     merged_dataset = db.merge(dataset) if dataset is not None else None
     if run is not None:
         db.add(run)
@@ -565,6 +629,23 @@ def list_kafka_continuous_maintenance_run_models(
     return list(db.scalars(statement.order_by(KafkaContinuousMaintenanceRunModel.created_at.desc())).all())
 
 
+def list_failed_kafka_continuous_replay_models(
+    db: Session,
+    job_id: str,
+) -> list[KafkaContinuousMaintenanceRunModel]:
+    ensure_schema(db)
+    statement = (
+        select(KafkaContinuousMaintenanceRunModel)
+        .where(
+            KafkaContinuousMaintenanceRunModel.job_id == job_id,
+            KafkaContinuousMaintenanceRunModel.kind == "quarantine_replay",
+            KafkaContinuousMaintenanceRunModel.status == "failed",
+        )
+        .order_by(KafkaContinuousMaintenanceRunModel.created_at.asc())
+    )
+    return list(db.scalars(statement).all())
+
+
 def list_kafka_continuous_maintenance_runs(db: Session, job_id: str) -> list[ContinuousMaintenanceRun]:
     return [continuous_maintenance_run_to_schema(run) for run in list_kafka_continuous_maintenance_run_models(db, job_id)]
 
@@ -577,7 +658,6 @@ def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
         .order_by(ETLRunModel.created_at.desc())
     ).all()
     return [run_to_schema(run) for run in runs]
-
 
 
 def list_run_models_for_job(db: Session, job_id: str) -> list[ETLRunModel]:
@@ -599,8 +679,32 @@ def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
     db.refresh(run, with_for_update=True)
 
 
-def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
-    runtime = get_kafka_continuous_runtime(db, job.id) if db is not None and job.execution_mode == "continuous" else None
+def public_sql_recipe(value: object) -> dict[str, Any] | None:
+    """Return the public SQL recipe without a persisted identity snapshot."""
+    if not isinstance(value, dict):
+        return None
+    recipe = dict(value)
+    legacy_run_as = recipe.pop("runAs", None)
+    if not recipe.get("runAsUserId") and isinstance(legacy_run_as, dict):
+        legacy_user_id = str(legacy_run_as.get("id") or "").strip()
+        if legacy_user_id:
+            recipe["runAsUserId"] = legacy_user_id
+    return recipe
+
+
+def job_to_schema(
+    db: Session,
+    job: ETLJobModel,
+    *,
+    continuous_runtime: KafkaContinuousRuntimeModel | None = None,
+    related_loaded: bool = False,
+    run_history: list[JobRunSummary] | None = None,
+) -> JobRowData:
+    runtime = continuous_runtime
+    hydrated_run_history = run_history or []
+    if not related_loaded:
+        runtime = get_kafka_continuous_runtime(db, job.id) if db is not None and job.execution_mode == "continuous" else None
+        hydrated_run_history = list_runs_for_job(db, job.id)
     persisted_rules = job.rules if job.rule_contract_version is not None and job.rules is not None else None
     compiled_rules = compile_rule_set(
         contract_version=job.rule_contract_version,
@@ -619,7 +723,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         owner=job.owner or "demo-user",
         created_by=job.created_by or job.owner or "demo-user",
         created_by_profile=job.created_by_profile,
-        permission_grants=permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        permission_grants=[],
         permissions=resource_permissions(can_run=True),
         status=job.status or "scheduled",
         tag=job.tag or "[생성]",
@@ -632,6 +736,8 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        job_kind=job.job_kind or "pipeline",
+        sql_recipe=public_sql_recipe(job.sql_recipe),
         execution_mode=job.execution_mode or "snapshot",
         continuous_config=job.continuous_config,
         continuous_runtime=continuous_runtime_to_schema(runtime),
@@ -655,6 +761,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         index_columns=job.index_columns,
         compression=job.compression,
         storage_path=job.storage_path,
+        iceberg_target=job.iceberg_target,
         target_description=job.target_description,
         target_database=job.target_database,
         target_tags=job.target_tags,
@@ -672,7 +779,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         next_run=job.next_run or "-",
         progress=job.progress,
         stats=job.stats,
-        run_history=list_runs_for_job(db, job.id),
+        run_history=hydrated_run_history,
         dag_steps=job.dag_steps,
         dag_steps_by_run_id=job.dag_steps_by_run_id,
     )
@@ -683,8 +790,23 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
         return None
     metrics = runtime.metrics or {}
     schema_state = runtime.schema_state or {}
+    record_legacy_runtime_error_projection(
+        metrics,
+        runtime.last_error,
+        public_status=runtime.status,
+    )
+    contract = runtime_contract_projection(
+        metrics,
+        public_status=runtime.status,
+        legacy_error=runtime.last_error,
+    )
     return KafkaContinuousRuntime(
         status=runtime.status,
+        desired_state=contract["desiredState"],
+        observed_state=contract["observedState"],
+        state_revision=contract["stateRevision"],
+        fencing_token=contract["fencingToken"],
+        error_detail=contract["errorDetail"],
         checkpoint_path=runtime.checkpoint_path,
         heartbeat_at=runtime.heartbeat_at,
         last_flush_at=runtime.last_flush_at,
@@ -748,7 +870,10 @@ def continuous_batch_to_schema(batch: KafkaContinuousBatchModel) -> KafkaContinu
         quarantined_count=int(batch.quarantined_count or 0),
         duration_ms=batch.duration_ms,
         source_ranges=batch.source_ranges or [],
+        source_boundary=batch.source_boundary or {},
         data_path=batch.data_path,
+        iceberg_snapshot_id=batch.iceberg_snapshot_id,
+        iceberg_table_uri=batch.iceberg_table_uri,
         quarantine_path=batch.quarantine_path,
         manifest_path=batch.manifest_path,
         last_error=batch.last_error,
@@ -804,6 +929,12 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
             storage_size_bytes=payload.get("storageSizeBytes"),
             lineage_graph=payload.get("lineageGraph"),
             materialization_runs=payload.get("materializationRuns") or [],
+            producer_job_id=dataset.producer_job_id or payload.get("producerJobId"),
+            producer_job_kind=dataset.producer_job_kind or payload.get("producerJobKind"),
+            execution_mode=dataset.execution_mode or payload.get("executionMode"),
+            source_kind=dataset.source_kind or payload.get("sourceKind"),
+            relation_mode=dataset.relation_mode or payload.get("relationMode"),
+            runtime_status=dataset.runtime_status or payload.get("runtimeStatus"),
         )
 
     return CatalogDataset(
@@ -832,17 +963,29 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
         downstream=dataset.downstream or [],
         lineage_graph=dataset.lineage_graph,
         materialization_runs=[],
+        producer_job_id=dataset.producer_job_id,
+        producer_job_kind=dataset.producer_job_kind,
+        execution_mode=dataset.execution_mode,
+        source_kind=dataset.source_kind,
+        relation_mode=dataset.relation_mode,
+        runtime_status=dataset.runtime_status,
     )
 
 
 def run_to_schema(run: ETLRunModel) -> JobRunSummary:
+    spark_result = (run.task_states or {}).get("sparkResult")
+    if not isinstance(spark_result, dict):
+        spark_result = {}
     return JobRunSummary(
         run_id=run.run_id,
         status=run.status,
         started_at=run.started_at,
         ended_at=run.ended_at,
         duration=run.duration,
+        input_bytes=_optional_non_negative_int(spark_result.get("inputBytes")),
+        input_file_count=_optional_non_negative_int(spark_result.get("inputFileCount")),
         input_rows=run.input_rows,
+        output_file_count=_optional_non_negative_int(spark_result.get("outputFileCount")),
         output_rows=run.output_rows,
         output_path=run.output_path,
         failed_stage=run.failed_stage,
@@ -855,3 +998,11 @@ def run_to_schema(run: ETLRunModel) -> JobRunSummary:
         last_synced_at=run.last_synced_at,
         sync_error=run.sync_error,
     )
+
+
+def _optional_non_negative_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None

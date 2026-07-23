@@ -1,89 +1,31 @@
-# AI Chat UI Contract
+# AI 진입점 계약
 
-Issue: #471
+상태: 독립 `AI 활용` 메뉴와 `/ai` 화면은 제거됨
 
-## Purpose
+이 문서는 과거 `AI 활용` 채팅 화면의 파일명을 호환 목적으로 유지한다. 현재 AskLake는 별도 범용 채팅방을 만들지 않고, 사용자가 작업 중인 화면 안에서 목적별 AI를 호출한다.
 
-`AI 활용` 메뉴는 AskLake의 독립 대화형 UI surface다. 나만무 프로젝트의 `AiQueryPage`에서 대화 thread와 composer의 정보 구조를 참고하지만, AskLake의 Catalog Dataset과 권한 모델에 맞게 다시 구현한다.
+## 현재 진입점
 
-이 화면은 SQL 분석의 Query AI와 Dashboard Assistant를 대체하거나 감싸지 않는다. 각각의 기존 API와 동작 경계는 유지한다.
+| 화면 | 사용자 동작 | 공개 API | 실제 결과 |
+| --- | --- | --- | --- |
+| SQL 분석 | `AI로 SQL 작성` | `POST /api/query/ai-suggestions` | 검증된 read-only SQL 초안 |
+| 대시보드 편집 | Assistant에 시각화 요청 | `POST /api/dashboards/assistant` | 검증된 `create_widget`/`update_widget` action을 draft에 저장 |
+| 수집/처리 | 필드·SQL 변환에서 `Nessie로 작성` | `POST /api/ai/generate-sql` | 입력 schema 범위의 Spark/Trino 변환식 |
+| Semantic Layer | RAG 컬럼 분석·검색 | `/api/catalog/datasets/{datasetId}/rag/*` | 승인된 전체 문서 청킹·임베딩·근거 검색 |
+| 리뷰 분석 | schema/row 분석 실행 | `/api/review-analysis/*` | AI Gateway 구조화 결과와 게시 가능한 모델 artifact |
 
-## Phase 0 Boundary
+## 공통 런타임 경계
 
-UI-only 단계에서 제공하는 것은 다음과 같다.
+- Browser는 모델 공급자에 직접 연결하지 않는다. FastAPI가 권한·Dataset 범위·출력 검증을 수행하고 private AI Gateway를 호출한다.
+- AI Gateway는 MCP의 서명된 1회성 Catalog context만 읽는다.
+- `PROVIDER=mock`은 `APP_ENV=test|testing`에서만 허용한다. local/production 실패 시 가짜 SQL·차트·근거를 만들지 않는다.
+- SQL과 대시보드의 `RAG 근거`에는 검색 후보 전체가 아니라 모델이 `usedEvidenceIds`로 실제 사용했다고 밝힌 source만 표시한다.
+- SQL은 자동 실행하지 않는다. 대시보드 시각화 요청은 검증 가능한 widget action이 없으면 화면을 변경하지 않는다.
+- 별도 `/ai` route, 대화 목록, 범용 composer는 제공하지 않는다.
 
-- Header, empty state, 추천 질문, 대화 thread, 고정 composer
-- 여러 대화와 입력값의 in-memory 상태
-- Catalog Dataset context 선택 및 선택 표시
-- query 권한이 없는 Dataset 제외
+## 확인 순서
 
-이 단계에서 제공하지 않는 것은 다음과 같다.
-
-- `POST /api/ai/*` 또는 새로운 AI backend API
-- OpenAI 호출, embedding, chunking, RAG index, vector DB
-- mock 분석 결과, 가짜 근거, 가짜 SQL, 가짜 결과 테이블
-- `localStorage` 또는 `sessionStorage` 대화 영속화
-
-## UI Structure
-
-화면은 아래 순서를 유지한다.
-
-1. compact conversation sidebar: 새 대화 생성, 기존 대화 전환, 대화 삭제
-2. 대화 header: 선택 Dataset context의 진입점
-3. scrollable thread: empty state 또는 사용자 질문/향후 assistant 응답 카드
-4. composer: 추천 질문 chip, textarea, send icon button
-
-Dataset context는 ChatGPT형 집중 레이아웃을 해치지 않도록 header 또는 composer 상단 chip으로 표현한다. Dataset 탐색은 필요할 때만 여는 compact selector로 제공하며 상시 넓은 우측 패널은 사용하지 않는다.
-
-## Local State
-
-```ts
-type Conversation = {
-  id: string;
-  title: string;
-  messages: Array<{ id: string; content: string; contextNames: string[] }>;
-  draftPrompt: string;
-  selectedDatasetIds: string[];
-  submissionState: "idle" | "runtime_unavailable";
-  createdAt: string;
-  updatedAt: string;
-};
-```
-
-- `Conversation[]`와 active conversation ID는 화면이 살아 있는 동안에만 유지한다.
-- 새 대화는 빈 Conversation을 생성하고 active conversation으로 전환한다. 기존 대화는 sidebar 목록에 남는다.
-- 대화 삭제는 해당 Conversation의 브라우저 메모리 상태만 제거한다. 마지막 대화를 삭제하면 빈 Conversation 하나를 즉시 생성해 active 상태를 유지한다.
-- 대화 제목은 첫 사용자 질문을 잘라서 사용하며, 첫 질문 전에는 `새 대화`다.
-- 질문 전송은 active conversation의 thread에 사용자 메시지를 추가하고 `runtime_unavailable` 상태를 표시할 수 있다.
-- runtime이 연결되기 전에는 assistant message를 임의로 만들지 않는다.
-- Dataset context와 runtime 상태는 Conversation별로 분리한다. 대화를 전환하면 해당 대화의 messages, draft prompt, Dataset context, 상태를 함께 복원한다.
-- 새 대화는 선택 Dataset context를 복사하지 않는다. Dataset context는 새 대화에서 다시 선택한다.
-
-## Dataset Eligibility
-
-대화 context 후보는 현재 hydrate된 `CatalogDataset`만 사용한다.
-
-```ts
-dataset.status === "available" && dataset.permissions?.canQuery !== false
-```
-
-이 UI 필터는 사용성 보조다. 후속 AI API는 선택된 모든 Dataset에 대해 backend `query` permission check를 다시 수행해야 한다.
-
-## Future Runtime Contract
-
-후속 backend 연결은 선택 Dataset ID와 prompt를 함께 전달한다. assistant response는 답변 본문 외에 선택적으로 다음 block을 포함할 수 있다.
-
-- evidence: Dataset, run, lineage 근거
-- sqlDraft: 검토 후 실행하는 read-only SQL 초안
-- resultPreview: 행/컬럼 미리보기
-- dashboardAction: 사용자가 확인 후 적용하는 dashboard 제안
-
-각 block은 backend guard와 Dataset permission check를 통과한 뒤에만 UI에서 활성화한다. 답변은 자동으로 SQL 실행, Dashboard 변경, Dataset 생성으로 이어지지 않는다.
-
-## Verification
-
-1. AI 활용 메뉴가 ChatGPT형 empty state와 composer를 보여준다.
-2. 사용 가능한 Dataset만 context selector에 표시된다.
-3. Dataset 선택/해제, Enter 전송, Shift+Enter 줄바꿈, 새 대화 생성/삭제와 대화 전환이 로컬 상태에서 동작한다.
-4. backend가 없는 상태에서 가짜 분석 답변이나 근거를 렌더링하지 않는다.
-5. keyboard focus, Escape/outside click context close, desktop/mobile에서 composer와 message thread가 겹치지 않는다.
+1. App sidebar에 `AI 활용` 메뉴가 없고 `/ai`가 workspace 화면으로 렌더링되지 않는지 확인한다.
+2. SQL, Dashboard, ETL의 각 진입점이 동일 AI Gateway health와 실제 provider/model provenance를 사용하는지 확인한다.
+3. Semantic Layer에서 다중 title/body 및 명시적으로 포함한 metadata를 문서 단위로 미리보고, 색인 작업 이력과 검색 source를 확인한다.
+4. Gateway/RAG가 준비되지 않았을 때 빈 근거와 명시적 unavailable 상태를 표시하고 결과를 위조하지 않는지 확인한다.

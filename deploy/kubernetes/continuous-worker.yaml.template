@@ -1,0 +1,62 @@
+# Render with `npm run render:kubernetes-continuous-worker` from backend.
+# This template intentionally does not change the current EC2 owner. Apply it
+# only during an approved owner-transfer rollout.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asklake-continuous-worker
+  namespace: ${ASKLAKE_K8S_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: asklake
+    app.kubernetes.io/component: continuous-worker
+    app.kubernetes.io/part-of: asklake
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: asklake
+      app.kubernetes.io/component: continuous-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: asklake
+        app.kubernetes.io/component: continuous-worker
+        app.kubernetes.io/part-of: asklake
+    spec:
+      serviceAccountName: asklake-backend
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: continuous-worker
+          image: ${ASKLAKE_BACKEND_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "app.continuous_worker"]
+          envFrom:
+            - configMapRef:
+                name: asklake-runtime
+            - secretRef:
+                name: asklake-backend-runtime
+          env:
+            - name: CONTINUOUS_CONTROL_PLANE
+              value: worker
+            - name: STARTUP_SCHEMA_MANAGEMENT_ENABLED
+              value: "false"
+            - name: ASKLAKE_CONTINUOUS_SPARK_RUNNER
+              value: kubernetes
+            - name: ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX
+              value: ${ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX}
+            - name: ASKLAKE_SPARK_KUBERNETES_NAMESPACE
+              value: ${ASKLAKE_K8S_NAMESPACE}
+            - name: ASKLAKE_SPARK_KUBERNETES_IMAGE
+              value: ${ASKLAKE_SPARK_KUBERNETES_IMAGE}
+            - name: ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT
+              value: ${ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT}
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

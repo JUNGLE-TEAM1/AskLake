@@ -6,6 +6,16 @@ import {
   RULE_CONTRACT_VERSION,
 } from "./ruleContract";
 
+export {
+  ETL_DRAFT_CONTRACT_VERSION,
+  ETL_DRAFT_REDACTED_VALUE,
+  hydrateEtlDraft,
+  normalizeEtlDraft,
+  sanitizeLiveEtlDraft,
+  serializeEtlDraft,
+} from "../state/etlDraftState";
+export type { EtlDraftEnvelope } from "../state/etlDraftState";
+
 export const retryFailureActionLabels: Record<RetryFailureAction, string> = {
   notify_only: "알림만 남기기",
   retry_then_fail: "재시도 후 실패 처리",
@@ -199,8 +209,10 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
 
 export function toUpdatePipelineRequest(draft: DraftPipeline): UpdatePipelineRequest {
   const {
+    continuousConfig: _continuousConfig,
     createdBy: _createdBy,
     createdByProfile: _createdByProfile,
+    executionMode: _executionMode,
     id: _id,
     recordParsing: _recordParsing,
     sourceConfig: _sourceConfig,

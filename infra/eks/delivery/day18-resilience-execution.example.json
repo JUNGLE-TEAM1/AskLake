@@ -1,0 +1,97 @@
+{
+  "contractVersion": "1.0",
+  "campaign": "eks-day18-resilience",
+  "environment": "dev",
+  "createdAt": "1970-01-01T00:00:00.000Z",
+  "baseRevision": "0000000000000000000000000000000000000000",
+  "images": {
+    "current": {
+      "gitRevision": "0000000000000000000000000000000000000000",
+      "receiptSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "candidate": {
+      "gitRevision": "0000000000000000000000000000000000000000",
+      "receiptSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "rollback": {
+      "gitRevision": "0000000000000000000000000000000000000000",
+      "receiptSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "targets": {
+    "workloadAliases": [
+      "Frontend",
+      "FastAPI"
+    ],
+    "boundedRuns": [
+      "Run A",
+      "Run B",
+      "Run C"
+    ],
+    "faultRuns": [
+      "Run D",
+      "Run E"
+    ]
+  },
+  "actions": {
+    "podRecovery": true,
+    "rollingUpdate": true,
+    "rollback": true,
+    "mskAuthorizationFailure": true,
+    "sparkDriverOrExecutorFailure": true,
+    "boundedE2EThreeConsecutive": true,
+    "duplicateCatalogVerification": true,
+    "cleanup": true,
+    "repeatDay17Autoscaling": false,
+    "performanceLoad": false,
+    "ec2RollbackExecution": false
+  },
+  "capabilities": {
+    "mskFaultUsesPersistedRun": false,
+    "sparkTerminalRetrySupported": false
+  },
+  "capabilityEvidence": {
+    "state": "pending",
+    "implementationRevision": "0000000000000000000000000000000000000000",
+    "proofManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "liveInputEvidence": {
+    "state": "pending",
+    "inputSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "targetSelectionSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "safety": {
+    "minimumFastApiReady": 2,
+    "immutableImagesOnly": true,
+    "platform": "linux/amd64",
+    "autoRollbackOnUnexpectedHealthFailure": true,
+    "autoRollbackOnReadyFloorBreach": true,
+    "stopOnScopeMismatch": true,
+    "allowIamExpansion": false,
+    "allowRbacExpansion": false,
+    "allowNodePoolMutation": false,
+    "allowContinuousMutation": false,
+    "allowDummyImage": false
+  },
+  "cleanup": {
+    "temporaryJobsZero": true,
+    "temporaryPodsZero": true,
+    "temporaryConfigMapsZero": true,
+    "temporarySecretsZero": true,
+    "localProcessesZero": true,
+    "hpaReturnsToMinimum": true,
+    "sparkNodesReturnToBaseline": true,
+    "preserveDurableResults": true
+  },
+  "evidence": {
+    "directory": "/private/tmp",
+    "fileMode": "0600",
+    "aliasesOnly": true,
+    "collectFaultWindowOnly": true
+  },
+  "approval": {
+    "state": "pending",
+    "approvedAt": null,
+    "scopeHash": null
+  }
+}

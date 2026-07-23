@@ -1,6 +1,20 @@
-import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, KafkaContinuousBatch, KafkaContinuousSession, SqlResultDraft } from "../types";
+import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, CreateTrinoSqlJobRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, JobStatusListResult, KafkaContinuousBatch, KafkaContinuousSession } from "../types";
 import { toCreatePipelineRequest, toUpdatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
+
+export {
+  cancelTrinoQueryRun,
+  estimateSqlQueryRun,
+  executeQueryDraft,
+  getQueryRun,
+  getTrinoQueryRun,
+  getTrinoQueryRunResultPage,
+  isTrinoQueryRun,
+  requestTrinoFullResults,
+  submitSqlQueryRun,
+  validateSqlQueryRun,
+} from "./sqlQueryApi";
+export type { SqlQueryRunResponse } from "./sqlQueryApi";
 
 export type PipelineCreationResult = {
   catalogTarget?: {
@@ -31,8 +45,19 @@ export async function getJob(jobId: string): Promise<JobRowData> {
   return apiClient.get<JobRowData>(`/api/etl/jobs/${encodeURIComponent(jobId)}`);
 }
 
+export async function getJobStatuses(jobIds: string[]): Promise<JobStatusListResult> {
+  if (jobIds.length === 0) return { jobs: [] };
+  const query = new URLSearchParams();
+  jobIds.forEach((jobId) => query.append("jobId", jobId));
+  return apiClient.get<JobStatusListResult>(`/api/etl/jobs/statuses?${query.toString()}`);
+}
+
 export async function updatePipelineDraft(jobId: string, draftPipeline: DraftPipeline): Promise<JobRowData> {
   return apiClient.patch<JobRowData>(`/api/etl/jobs/${encodeURIComponent(jobId)}`, toUpdatePipelineRequest(draftPipeline));
+}
+
+export async function deletePipelineJob(jobId: string): Promise<{ deletedJobId: string }> {
+  return apiClient.delete<{ deletedJobId: string }>(`/api/etl/jobs/${encodeURIComponent(jobId)}`);
 }
 
 export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand, "edit" | "delete">): Promise<JobCommandResult> {
@@ -71,10 +96,6 @@ export async function compactContinuousTarget(jobId: string, targetFileSizeMb = 
   return apiClient.post<ContinuousMaintenanceRun>(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`, { targetFileSizeMb });
 }
 
-export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
-  return apiClient.post<SqlResultDraft>("/api/query/runs", { datasetId: dataset.id, query });
-}
-
-export async function getQueryRun(runId: string): Promise<SqlResultDraft> {
-  return apiClient.get<SqlResultDraft>(`/api/query/runs/${encodeURIComponent(runId)}`);
+export async function createTrinoSqlJob(request: CreateTrinoSqlJobRequest): Promise<PipelineCreationResult> {
+  return apiClient.post<PipelineCreationResult>("/api/etl/sql-jobs", request);
 }

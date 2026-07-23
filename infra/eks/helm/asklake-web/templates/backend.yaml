@@ -1,0 +1,113 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 600
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: asklake
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "asklake-web.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+      annotations:
+        asklake.io/runtime-boundary-configmap: {{ .Values.backend.runtimeBoundaryConfigMapName | quote }}
+        {{- with .Values.backend.runtimeConfigRevision }}
+        asklake.io/runtime-config-revision: {{ . | quote }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.backend.serviceAccountName }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
+      nodeSelector:
+        {{- toYaml .Values.placement.nodeSelector | nindent 8 }}
+      containers:
+        - name: fastapi
+          image: {{ .Values.backend.image | quote }}
+          imagePullPolicy: IfNotPresent
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - {{ printf "sleep %d" (int .Values.backend.preStopDelaySeconds) | quote }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.backend.runtimeConfigMapName }}
+            - secretRef:
+                name: {{ .Values.backend.runtimeSecretName }}
+            {{- if ne .Values.backend.trinoRuntimeSecretName .Values.backend.runtimeSecretName }}
+            - secretRef:
+                name: {{ .Values.backend.trinoRuntimeSecretName }}
+            {{- end }}
+          env:
+            - {name: ASKLAKE_KAFKA_ALLOWED_TOPIC_PREFIXES, value: {{ .Values.backend.kafkaAllowedTopicPrefixes | quote }}}
+          {{- if or .Values.backend.realtime.enabled (eq .Values.deploymentProfile "realtime-v1-only") }}
+            - {name: ASKLAKE_CONTINUOUS_CONTROL_PLANE, value: {{ .Values.backend.realtime.apiControlPlane | quote }}}
+            - {name: CONTINUOUS_CONTROL_PLANE, value: "disabled"}
+            - {name: KAFKA_CONTINUOUS_V1_API_ENABLED, value: {{ .Values.backend.realtime.v1ApiEnabled | quote }}}
+            - {name: KAFKA_CONTINUOUS_V1_OWNER_GENERATION, value: {{ .Values.backend.realtime.v1OwnerGeneration | quote }}}
+            - {name: CONTINUOUS_SQL_JOIN_ENABLED, value: {{ .Values.backend.realtime.continuousSqlJoinEnabled | quote }}}
+            - {name: DASHBOARD_SYNC_MODE, value: {{ .Values.backend.realtime.dashboardSyncMode | quote }}}
+            - {name: REALTIME_EVENTS_ENABLED, value: {{ .Values.backend.realtime.realtimeEventsEnabled | quote }}}
+          {{- end }}
+          volumeMounts:
+            - name: backend-runtime-files
+              mountPath: /var/run/asklake/secrets
+              readOnly: true
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet: { path: /api/health, port: http }
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+      volumes:
+        - name: backend-runtime-files
+          secret:
+            secretName: {{ .Values.backend.trinoRuntimeSecretName }}
+            items:
+              - key: {{ .Values.backend.runtimeSecretTrinoCaKey }}
+                path: trino-ca.pem
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.backend.service.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  type: {{ .Values.backend.service.type }}
+  selector:
+    app.kubernetes.io/name: asklake
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: {{ .Values.backend.service.port }}
+      targetPort: http
+{{- end }}

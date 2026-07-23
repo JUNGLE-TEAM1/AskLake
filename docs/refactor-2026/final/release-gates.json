@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "auditVerdict": "guarded-go",
+  "productionExecution": "blocked-pending-manual-evidence",
+  "residualP0": [],
+  "residualP1": [
+    {
+      "id": "R-003",
+      "owner": "data-platform",
+      "mitigation": "새 핵심 로직 추가를 quality gate로 차단하고 application use case/port로만 이동한다.",
+      "dueDate": "2026-09-15"
+    },
+    {
+      "id": "R-008",
+      "owner": "analytics-experience",
+      "mitigation": "현재 cascade 순서를 고정한 채 visual regression 기준으로 중복 전역 selector를 제거한다.",
+      "dueDate": "2026-09-30"
+    },
+    {
+      "id": "R-016",
+      "owner": "data-platform",
+      "mitigation": "등록된 production compatibility 경로를 30일 0-call metric 후 별도 contract PR에서 제거한다.",
+      "dueDate": "2026-10-31"
+    },
+    {
+      "id": "R-017",
+      "owner": "data-platform",
+      "mitigation": "authority matrix의 Python-owned connector use case를 versioned adapter 뒤로 이동하고 Node 경로를 제거한다.",
+      "dueDate": "2026-09-30"
+    },
+    {
+      "id": "R-018",
+      "owner": "data-platform",
+      "mitigation": "실제 EKS workload와 EC2 process가 Continuous control plane을 중복 claim하지 않는지 rollout 전에 대조한다.",
+      "dueDate": "2026-08-15"
+    },
+    {
+      "id": "R-019",
+      "owner": "maintainer",
+      "mitigation": "10개 stacked PR을 manifest 순서대로 하나씩 merge하고 각 단계 뒤 다음 diff와 CI를 다시 검증한다.",
+      "dueDate": "2026-08-15"
+    }
+  ],
+  "gates": [
+    {
+      "id": "static-and-contract",
+      "status": "passed",
+      "requiredFor": ["canary", "production"],
+      "evidence": [
+        "docs/refactor-2026/final/artifacts/final-audit.json",
+        "docs/refactor-2026/contracts/api-db-persisted-compatibility.md"
+      ]
+    },
+    {
+      "id": "deterministic-pr-release-suite",
+      "status": "passed",
+      "requiredFor": ["canary", "production"],
+      "evidence": [
+        "docs/refactor-2026/contracts/etl-e2e-recovery-harness.md",
+        "backend/scripts/etl-e2e-recovery-scenarios.json"
+      ]
+    },
+    {
+      "id": "stacked-pr-merge-order",
+      "status": "manual-required",
+      "requiredFor": ["canary", "production"],
+      "evidence": [
+        "docs/refactor-2026/final/stacked-pr-merge-plan.json",
+        "docs/refactor-2026/contracts/stacked-pr-merge-plan.md"
+      ],
+      "operatorAction": "manifest의 10개 PR을 순서대로 하나씩 dev에 merge하고 각 단계의 merge SHA, next diff와 green check URL을 release record에 첨부한다."
+    },
+    {
+      "id": "control-plane-live-owner",
+      "status": "manual-required",
+      "requiredFor": ["production"],
+      "evidence": [
+        "deploy/control-plane-ownership.json",
+        "docs/refactor-2026/contracts/control-plane-deployment-ownership.md"
+      ],
+      "operatorAction": "실제 EKS workload/replica와 EC2 Compose process를 대조해 Kafka Continuous와 Continuous SQL owner가 각각 하나임을 release record에 첨부한다."
+    },
+    {
+      "id": "isolated-nightly-fault-suite",
+      "status": "manual-required",
+      "requiredFor": ["production"],
+      "evidence": ["backend npm run verify:etl-e2e-recovery:nightly"],
+      "operatorAction": "self-hosted + asklake-e2e 격리 runner에서 nightly profile artifact를 release record에 첨부한다."
+    },
+    {
+      "id": "production-clean-reboot",
+      "status": "manual-required",
+      "requiredFor": ["production"],
+      "evidence": ["docs/refactor-2026/operations/spark-runtime-reboot-recovery.md"],
+      "operatorAction": "canary host를 clean reboot하고 UID 185, report/checkpoint, reconcile, Catalog/Dashboard smoke 증거를 첨부한다."
+    },
+    {
+      "id": "backup-restore-drill",
+      "status": "manual-required",
+      "requiredFor": ["production"],
+      "evidence": ["docs/refactor-2026/operations/staged-rollout-and-rollback.md"],
+      "operatorAction": "metadata dump와 object manifest를 격리 환경에 복원하고 old image read 검증을 완료한다."
+    }
+  ],
+  "rolloutPhases": [
+    {
+      "order": 1,
+      "id": "expand-and-backup",
+      "commandTemplate": "<operator> capture-release-state --commit <sha> --images <digests> --output <release-dir>",
+      "stopCondition": "backup checksum 또는 old reader 검증 실패",
+      "resumeCondition": "격리 복원과 old reader 검증 성공",
+      "rollbackTemplate": "additive expand를 유지하고 이전 image digest로 복귀"
+    },
+    {
+      "order": 2,
+      "id": "backend-canary",
+      "commandTemplate": "<operator> deploy backend --image <digest> --scope <canary-host>",
+      "stopCondition": "command/reconcile/report/storage 오류 gate 초과",
+      "resumeCondition": "30분간 gate 정상 및 기존 Job hydrate 성공",
+      "rollbackTemplate": "<operator> deploy backend --image <previous-digest> --scope <canary-host>"
+    },
+    {
+      "order": 3,
+      "id": "runtime-worker-canary",
+      "commandTemplate": "<operator> deploy spark-worker --image <digest> --scope <canary-job>",
+      "stopCondition": "duplicate/loss/checkpoint rollback 또는 publication 단계 실패",
+      "resumeCondition": "30분간 exactly-once 증거와 Catalog/Dashboard 수렴",
+      "rollbackTemplate": "<operator> deploy spark-worker --image <previous-digest> --scope <canary-job>"
+    },
+    {
+      "order": 4,
+      "id": "frontend-canary",
+      "commandTemplate": "<operator> deploy frontend --image <digest> --scope <canary-route>",
+      "stopCondition": "UI error/stale poll 또는 API compatibility 오류",
+      "resumeCondition": "브라우저 smoke와 polling revision 수렴",
+      "rollbackTemplate": "<operator> deploy frontend --image <previous-digest> --scope <canary-route>"
+    },
+    {
+      "order": 5,
+      "id": "progressive-rollout",
+      "commandTemplate": "<operator> promote --from canary --percent <10|25|50|100>",
+      "stopCondition": "관찰 gate 초과 또는 clean reboot 실패",
+      "resumeCondition": "각 구간 30분 정상과 운영 승인",
+      "rollbackTemplate": "<operator> route --percent 100 --to <previous-release>"
+    }
+  ],
+  "rollbackTriggers": [
+    {
+      "id": "runtime-terminal-error",
+      "metric": "command failure, reconcile unknown/stale, report missing, storage unwritable",
+      "threshold": "canary 1건 또는 기존 15분 baseline 초과",
+      "decisionMinutes": 5,
+      "rollbackTemplate": "runtime/frontend 확장을 중지하고 직전 backend/worker digest로 복귀"
+    },
+    {
+      "id": "data-integrity",
+      "metric": "duplicate, loss, checkpoint rollback, manifest fingerprint conflict",
+      "threshold": "1건",
+      "decisionMinutes": 5,
+      "rollbackTemplate": "producer를 중지하지 않고 canary consumer를 fencing한 뒤 직전 worker digest로 복귀"
+    },
+    {
+      "id": "publication-or-ui",
+      "metric": "Catalog/Dashboard publication failure, frontend stale poll/error",
+      "threshold": "5분 지속 또는 3회 연속",
+      "decisionMinutes": 10,
+      "rollbackTemplate": "실패 단계 재개를 보존하고 frontend 또는 publication worker만 직전 digest로 복귀"
+    }
+  ]
+}

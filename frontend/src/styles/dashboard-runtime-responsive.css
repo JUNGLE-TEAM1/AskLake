@@ -26,6 +26,10 @@
     display: none;
   }
 
+  .asklake-dashboard-inspector-toggle {
+    display: none;
+  }
+
   .asklake-dashboard-topbar {
     align-items: flex-start;
     flex-direction: column;

@@ -356,7 +356,7 @@ export function DataTable<TData, TValue>({
                 <span className="inline-flex items-center gap-2">
                   Rows
                   <NativeSelect
-                    className="h-8 rounded-md px-2 pr-7 text-xs font-semibold text-slate-700"
+                    className="h-8 rounded-md px-2 pr-7 text-xs font-normal text-slate-700"
                     onChange={(event) => table.setPageSize(Number(event.target.value))}
                     size="sm"
                     value={paginationState.pageSize}
@@ -372,7 +372,7 @@ export function DataTable<TData, TValue>({
               ) : null}
             </span>
           ) : undefined}
-          summaryClassName="flex min-w-0 flex-wrap items-center gap-3 text-xs font-semibold text-slate-500"
+          summaryClassName="flex min-w-0 flex-wrap items-center gap-3 text-xs font-normal text-slate-500"
           totalPages={pageCount}
         />
       )}

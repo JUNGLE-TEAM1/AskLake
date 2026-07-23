@@ -1,0 +1,91 @@
+import { useEffect, useRef } from "react";
+import type { FlowId } from "../../types";
+import { wizardFlows } from "../../data/appShellData";
+import type { WriteAuditLog } from "./contracts";
+import { getWorkspaceDataRequirements } from "./routeDataRequirements";
+import { useCatalogHydration } from "./useCatalogHydration";
+import { useCatalogController } from "./useCatalogController";
+import { useJobController } from "./useJobController";
+import { useJobsHydration } from "./useJobsHydration";
+import { usePipelineMutations } from "./usePipelineMutations";
+import { useAskLakeWorkspaceState } from "./useAskLakeWorkspaceState";
+
+export function useAskLakeWorkspace({
+  activeFlow,
+  enabled = true,
+  onFlowChange,
+  showToast,
+  writeAuditLog,
+}: {
+  activeFlow: FlowId;
+  enabled?: boolean;
+  onFlowChange: (flow: FlowId) => void;
+  showToast: (message: string, tone?: "success" | "info") => void;
+  writeAuditLog: WriteAuditLog;
+}) {
+  const state = useAskLakeWorkspaceState();
+  const previousFlowRef = useRef<FlowId | null>(null);
+  const dataRequirements = getWorkspaceDataRequirements(activeFlow);
+  const jobsHydration = useJobsHydration({ enabled: enabled && dataRequirements.jobs, showToast, state });
+  const catalogHydration = useCatalogHydration({ enabled: enabled && dataRequirements.catalog, showToast, state });
+  const pipeline = usePipelineMutations({ onFlowChange, showToast, state, writeAuditLog });
+  const catalog = useCatalogController({ onFlowChange, showToast, state, writeAuditLog });
+  const jobs = useJobController({ enabled: enabled && dataRequirements.jobs, onFlowChange, showToast, state, writeAuditLog });
+
+  useEffect(() => {
+    const previousFlow = previousFlowRef.current;
+    previousFlowRef.current = activeFlow;
+    if (!previousFlow || !wizardFlows.includes(previousFlow) || wizardFlows.includes(activeFlow)) return;
+    pipeline.resetDraftPipeline();
+    window.localStorage.removeItem("asklake.targetConfigDraft");
+  }, [activeFlow, pipeline]);
+
+  const refreshData = async () => {
+    if (dataRequirements.jobs) return jobsHydration.refreshJobs();
+    if (dataRequirements.catalog) return catalogHydration.refreshCatalog();
+    return false;
+  };
+
+  return {
+    apiPending: state.apiPending,
+    catalogError: state.catalogError,
+    catalogLoading: state.catalogLoading,
+    commandPendingByJobId: state.commandPendingByJobId,
+    createMutationState: state.createMutationState,
+    createPipeline: pipeline.createPipeline,
+    createSqlDatasetJob: pipeline.createSqlDatasetJob,
+    createTrinoSqlJob: pipeline.createTrinoSqlJob,
+    dagStepsByRunId: state.dagStepsByRunId,
+    dataRequirements,
+    datasets: state.datasets,
+    datasetDeletionPendingById: catalog.datasetDeletionPendingById,
+    deleteDataset: catalog.deleteDataset,
+    deleteMaterializationRun: catalog.deleteMaterializationRun,
+    draftPipeline: state.draftPipeline,
+    filterJobs: jobsHydration.filterJobs,
+    handleJobCommand: jobs.handleJobCommand,
+    jobExecutionEvidence: state.jobExecutionEvidence,
+    jobListFacets: state.jobListFacets,
+    jobs: state.jobs,
+    jobsError: state.jobsError,
+    jobsLoading: state.jobsLoading,
+    loadDatasetDeletionImpact: catalog.loadDatasetDeletionImpact,
+    openDataset: catalog.openDataset,
+    openDatasetInSql: catalog.openDatasetInSql,
+    openJobDetail: jobs.openJobDetail,
+    openJobRuns: jobs.openJobRuns,
+    refreshData,
+    resetDraftPipeline: pipeline.resetDraftPipeline,
+    runsByJobId: state.runsByJobId,
+    selectedDataset: state.selectedDataset,
+    selectedJob: state.selectedJob,
+    selectedRunIdByJobId: state.selectedRunIdByJobId,
+    selectRunForJob: jobs.selectRunForJob,
+    setSelectedDataset: state.setSelectedDataset,
+    setJobs: state.setJobs,
+    setSelectedJob: state.setSelectedJob,
+    setSqlResultDraft: state.setSqlResultDraft,
+    sqlResultDraft: state.sqlResultDraft,
+    updateDraftPipeline: pipeline.updateDraftPipeline,
+  };
+}

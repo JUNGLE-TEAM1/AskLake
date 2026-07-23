@@ -38,6 +38,7 @@ export function WidgetFrame({
   onDelete,
   onApplyWidgetPatch,
   onPatchConfig,
+  onRetryData,
   onSelect,
   onSelectColorSlot,
   selected = false,
@@ -47,8 +48,9 @@ export function WidgetFrame({
   deleteDisabled?: boolean;
   editable?: boolean;
   onDelete?: (widgetId: string) => void;
-  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
-  onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
+  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<boolean>;
+  onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<boolean>;
+  onRetryData?: (widgetId: string) => void;
   onSelect?: (widgetId: string) => void;
   onSelectColorSlot?: (widgetId: string, slotIndex: number) => void;
   selected?: boolean;
@@ -57,11 +59,22 @@ export function WidgetFrame({
   const columnSpan = clampSpan(widget.layout?.w, 4);
   const rowSpan = clampSpan(widget.layout?.h, 4);
   const isAiWorking = assistantContext?.workingWidgetId === widget.id;
+  const isDataLoading = widget.dataStatus === "pending" || widget.dataStatus === "loading";
+  const hasDataError = widget.dataStatus === "error";
+  const liveRevision = widget.liveRefresh === true && typeof widget.appliedRevision === "number"
+    ? widget.appliedRevision
+    : null;
 
   return (
     <article
-      aria-busy={isAiWorking || undefined}
-      className={cx("asklake-widget-frame", editable && "editable", selected && "selected", isAiWorking && "ai-working")}
+      aria-busy={isAiWorking || isDataLoading || undefined}
+      className={cx(
+        "asklake-widget-frame",
+        editable && "editable",
+        selected && "selected",
+        isAiWorking && "ai-working",
+        liveRevision !== null && "live",
+      )}
       style={{
         gridColumn: editable ? undefined : `span ${columnSpan}`,
         minHeight: editable ? undefined : `${Math.max(160, rowSpan * 56)}px`,
@@ -74,36 +87,57 @@ export function WidgetFrame({
       }}
     >
       <header>
-        <div>
-          <span>{widgetTypeLabel(widget)}</span>
-          <h2>{widget.title || "제목 없는 위젯"}</h2>
+        <span className="asklake-widget-type">{widgetTypeLabel(widget)}</span>
+        <h2 className="asklake-widget-title">{widget.title || "제목 없는 위젯"}</h2>
+        <div className="asklake-widget-header-actions">
+          {editable && selected && (
+            <Button
+              aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}
+              className="asklake-widget-delete-button widget-control"
+              disabled={deleteDisabled}
+              title="위젯 삭제"
+              type="button"
+              size="icon"
+              variant="destructive"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete?.(widget.id);
+              }}
+            >
+              <Trash2 size={16} />
+            </Button>
+          )}
         </div>
-        {editable && selected && (
-          <Button
-            aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}
-            className="asklake-widget-delete-button widget-control"
-            disabled={deleteDisabled}
-            title="위젯 삭제"
-            type="button"
-            size="icon"
-            variant="destructive"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete?.(widget.id);
-            }}
-          >
-            <Trash2 size={16} />
-          </Button>
-        )}
       </header>
       <div className="asklake-widget-frame-body">
-        <WidgetRenderer
-          assistantContext={assistantContext}
-          widget={widget}
-          onApplyWidgetPatch={onApplyWidgetPatch ? (patch) => onApplyWidgetPatch(widget, patch) : undefined}
-          onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
-          onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
-        />
+        {isDataLoading ? (
+          <div className="asklake-widget-data-state" role="status" aria-live="polite">
+            위젯 데이터를 불러오는 중입니다.
+          </div>
+        ) : hasDataError ? (
+          <div className="asklake-widget-data-state error" role="alert">
+            <span>{widget.dataError || "위젯 데이터를 불러오지 못했습니다."}</span>
+            <Button type="button" size="sm" variant="outline" onClick={(event) => {
+              event.stopPropagation();
+              onRetryData?.(widget.id);
+            }}>
+              다시 시도
+            </Button>
+          </div>
+        ) : (
+        <div
+          className="asklake-widget-refresh-content"
+          key={`widget-content-${widget.id}-${liveRevision ?? "static"}`}
+        >
+          <WidgetRenderer
+            assistantContext={assistantContext}
+            widget={widget}
+            onApplyWidgetPatch={onApplyWidgetPatch ? (patch) => onApplyWidgetPatch(widget, patch) : undefined}
+            onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
+            onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
+          />
+        </div>
+        )}
       </div>
       {isAiWorking && (
         <div className="asklake-ai-working-overlay" role="status" aria-live="polite">
@@ -112,6 +146,13 @@ export function WidgetFrame({
           </span>
           <strong>AI 시각화 작업중</strong>
         </div>
+      )}
+      {liveRevision !== null && (
+        <span
+          aria-hidden="true"
+          className="asklake-widget-live-pulse"
+          key={`live-revision-${liveRevision}`}
+        />
       )}
     </article>
   );

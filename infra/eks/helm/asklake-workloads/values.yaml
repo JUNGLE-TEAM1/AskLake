@@ -1,0 +1,297 @@
+namespace: asklake-dev
+deploymentProfile: standard
+
+global:
+  environment: production
+  awsRegion: ap-northeast-2
+
+frontend:
+  enabled: true
+  replicas: 2
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  image:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  serviceAccountName: asklake-frontend
+  service:
+    name: frontend
+    port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+backend:
+  enabled: true
+  replicas: 2
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  image:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  serviceAccountName: asklake-backend
+  service:
+    name: fastapi
+    port: 8080
+  config:
+    aiQueryProvider: direct
+    airflowApiAuthMode: username_password
+    corsOrigins: ""
+    bootstrapAdminEmail: ""
+    kafkaBroker: ""
+    kafkaAuthMode: iam
+    kafkaAllowedTopicPrefixes: asklake.
+    objectStorageProvider: aws
+    rawBucket: ""
+    outputBucket: ""
+    outputPrefix: asklake-output
+    allowedBuckets: ""
+    sparkRunner: kubernetes
+    sparkExecutionLeaseSeconds: 60
+    sparkResourcePlannerMode: "off"
+    sparkResourceTargetPartitionBytes: 134217728
+    sparkResourceTargetPartitionsPerExecutor: 384
+    sparkResourceMinExecutors: 1
+    sparkResourceMaxExecutors: 4
+    airflowApiBaseUrl: http://airflow-apiserver:8080
+    airflowDagId: asklake_etl_job
+    trinoEnabled: true
+    trinoBaseUrl: ""
+    trinoCatalog: iceberg
+    trinoSchema: asklake
+    trinoUser: asklake-api
+    trinoWarehouseBucket: ""
+    trinoWarehousePrefix: warehouse
+    trinoResultStorageBucket: ""
+  realtime:
+    enabled: false
+    apiControlPlane: external_ec2
+    continuousSqlJoinEnabled: false
+    dashboardSyncMode: polling
+    realtimeEventsEnabled: false
+  runtimeSecret:
+    name: asklake-backend-runtime
+    trinoCaKey: trino-ca.pem
+    keys:
+      databaseUrl: DATABASE_URL
+      bootstrapAdminPassword: BOOTSTRAP_ADMIN_PASSWORD
+      aiGatewayServiceToken: AI_GATEWAY_SERVICE_TOKEN
+      aiMcpServiceToken: AI_MCP_SERVICE_TOKEN
+      aiContextSigningSecret: AI_CONTEXT_SIGNING_SECRET
+      openaiApiKey: OPENAI_API_KEY
+      airflowApiToken: AIRFLOW_API_TOKEN
+      airflowPassword: AIRFLOW_PASSWORD
+      airflowExecutionApiToken: AIRFLOW_EXECUTION_API_TOKEN
+      airflowInternalToken: AIRFLOW_INTERNAL_TOKEN
+      trinoAuthUsername: TRINO_AUTH_USERNAME
+      trinoAuthPassword: TRINO_AUTH_PASSWORD
+      trinoMaterializerUsername: TRINO_MATERIALIZER_USERNAME
+      trinoMaterializerPassword: TRINO_MATERIALIZER_PASSWORD
+      trinoResultCursorSecret: TRINO_RESULT_CURSOR_SECRET
+      trinoQueryConfirmationSecret: TRINO_QUERY_CONFIRMATION_SECRET
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+airflow:
+  enabled: true
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
+  image:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  serviceAccountName: asklake-airflow
+  service:
+    name: airflow-apiserver
+    port: 8080
+  config:
+    executor: LocalExecutor
+    authManager: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    executionApiServerUrl: http://airflow-apiserver:8080/execution/
+    internalBaseUrl: http://fastapi:8080
+    executionApiBaseUrl: http://fastapi:8080
+    dagId: asklake_etl_job
+    jwtIssuer: asklake
+    apiUsername: airflow
+    apiUserEmail: airflow@asklake.local
+    rdsCaConfigMapName: asklake-rds-ca
+    rdsCaKey: ap-northeast-2-bundle.pem
+    rdsCaMountPath: /var/run/asklake/rds-ca/ap-northeast-2-bundle.pem
+    internalTimeoutSeconds: 1800
+    executionApiTimeoutSeconds: 7500
+  runtimeSecret:
+    name: asklake-airflow-runtime
+    keys:
+      databaseUrl: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+      apiPassword: AIRFLOW_PASSWORD
+      executionApiToken: AIRFLOW_EXECUTION_API_TOKEN
+      internalToken: AIRFLOW_INTERNAL_TOKEN
+      fernetKey: AIRFLOW__CORE__FERNET_KEY
+      jwtSecret: AIRFLOW__API_AUTH__JWT_SECRET
+  resources:
+    apiServer:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "1", memory: 2Gi}
+    scheduler:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "1", memory: 2Gi}
+    dagProcessor:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+    migration:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+
+mskSmoke:
+  create: false
+  serviceAccountName: asklake-msk-smoke
+  topic: asklake.eks-mvp.fixture.v1
+  timeoutSeconds: 60
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+sparkApplication:
+  create: false
+  nodeSelector:
+    asklake.io/workload-class: spark
+    kubernetes.io/arch: amd64
+  tolerations:
+    - key: asklake.io/workload-class
+      operator: Equal
+      value: spark
+      effect: NoSchedule
+  image:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  serviceAccountName: asklake-spark
+  runId: ""
+  jobId: ""
+  mainApplicationFile: local:///opt/asklake/scripts/spark_job_run.py
+  timeoutSeconds: 7200
+  kafka:
+    broker: ""
+    topic: asklake.eks-mvp.fixture.v1
+    consumerGroup: asklake-eks-mvp-spark-v1
+    fixtureBatchId: ""
+    expectedCount: 100
+    authMode: iam
+    iamAuthJar: local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar
+  output:
+    bucket: ""
+    prefix: eks-mvp/output
+  checkpoint:
+    bucket: ""
+    prefix: eks-mvp/checkpoints
+  warehouse:
+    bucket: ""
+    prefix: warehouse
+  target:
+    catalog: iceberg
+    namespace: asklake
+    table: eks_mvp_fixture
+    writeMode: replace
+  runtimeSecret:
+    name: asklake-spark-runtime
+    keys:
+      jdbcUrl: ASKLAKE_SPARK_ICEBERG_JDBC_URL
+      jdbcUser: ASKLAKE_SPARK_ICEBERG_JDBC_USER
+      jdbcPassword: ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD
+  driver:
+    cores: 1
+    memory: 2g
+    memoryOverhead: 512m
+    resources:
+      requests: {cpu: "1", memory: 2560Mi}
+      limits: {cpu: "2", memory: 2560Mi}
+  executor:
+    # Dev performance experiment matrix: 1, 2, 4. Schema caps this at 4.
+    instances: 1
+    cores: 2
+    memory: 4g
+    memoryOverhead: 1g
+    resources:
+      requests: {cpu: "2", memory: 5Gi}
+      limits: {cpu: "3", memory: 5Gi}
+
+realtimeV1:
+  enabled: false
+  replicas: 1
+  serviceAccountName: asklake-realtime-v1-worker
+  runtimeConfigMapName: asklake-runtime
+  ownerTransfer:
+    approved: false
+    previousOwnerFenced: false
+    generation: ""
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
+  runtimeDocument:
+    bucket: ""
+    prefix: continuous-runtime
+  spark:
+    serviceAccountName: asklake-realtime-v1-spark
+    runtimeSecretName: asklake-spark-runtime
+    mainApplicationFile: local:///opt/asklake/scripts/kafka_continuous_stream.py
+  kafka:
+    authMode: iam
+    iamAuthJar: local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar
+    topicPrefix: asklake.eks-realtime.fixture
+    consumerGroupPrefix: asklake-eks-realtime-v1
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+trino:
+  enabled: true
+  replicas: 1
+  # The default remains the proven single coordinator that also runs tasks.
+  # Distributed mode has no sizing defaults. Every worker input must be
+  # supplied explicitly by an approved deployment overlay.
+  distributed:
+    enabled: false
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
+  image:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  serviceAccountName: asklake-trino
+  service:
+    name: asklake-trino
+    port: 8443
+  config:
+    catalogName: iceberg
+    jdbcCatalogName: asklake
+    schemaName: asklake
+    warehouseBucket: ""
+    warehousePrefix: warehouse
+    queryUser: asklake-api
+    materializerUser: asklake-materializer
+  runtimeSecret:
+    name: asklake-trino-runtime
+    keys:
+      jdbcUrl: TRINO_ICEBERG_JDBC_URL
+      jdbcUser: TRINO_ICEBERG_JDBC_USER
+      jdbcPassword: TRINO_ICEBERG_JDBC_PASSWORD
+      keystorePassword: TRINO_TLS_KEYSTORE_PASSWORD
+      internalSharedSecret: TRINO_INTERNAL_SHARED_SECRET
+      keystoreFile: trino-keystore.jks
+      passwordFile: trino-password.db
+  resources:
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {cpu: "2", memory: 4Gi}

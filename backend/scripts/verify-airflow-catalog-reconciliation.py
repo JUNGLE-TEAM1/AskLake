@@ -63,7 +63,8 @@ def main() -> None:
             assert len(second.dataset.materialization_runs) == 2
             assert {item["runId"] for item in second.dataset.materialization_runs} == {first_run_id, second_run_id}
             assert second.dataset.source_run_id == second_run_id
-            assert second.dataset.rows == "5행"
+            assert second.dataset.rows == "3행"
+            assert all(item["materializationMode"] == "snapshot" for item in second.dataset.materialization_runs)
 
             not_ready_run_id = f"run_catalog_{suffix}_not_ready"
             add_run(db, job_id, not_ready_run_id, None, spark_status=None)

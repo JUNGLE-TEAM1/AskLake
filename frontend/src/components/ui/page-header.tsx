@@ -12,7 +12,7 @@ export const pageHeaderVariants = cva("flex min-w-0 flex-col gap-4", {
     size: {
       default: "",
       lg: "gap-5",
-      sm: "gap-3",
+      sm: "gap-2",
     },
     variant: {
       bordered: "border-b border-slate-200 pb-5",
@@ -53,27 +53,43 @@ export function PageHeader({
   variant,
   ...props
 }: PageHeaderProps) {
+  const compact = size === "sm";
+
   return (
     <header className={cn(pageHeaderVariants({ className, size, variant }))} {...props}>
-      <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className={cn("flex min-w-0 gap-3", leadingAlign === "center" ? "items-center" : "items-start")}>
+      <div className={cn("flex min-w-0 flex-col sm:flex-row sm:justify-between", compact ? "gap-2 sm:items-center" : "gap-4 sm:items-start")}>
+        <div className={cn("flex min-w-0", compact ? "gap-2" : "gap-3", leadingAlign === "center" ? "items-center" : "items-start")}>
           {icon && (
-            <span className={cn(leadingAlign === "center" ? "mt-0" : "mt-1", "inline-flex size-14 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-blue-700 shadow-sm [&_svg]:size-7 sm:size-16 sm:[&_svg]:size-[30px]", iconClassName)}>
+            <span className={cn(
+              "inline-flex shrink-0 items-center justify-center border border-slate-200 bg-white text-blue-700 shadow-sm",
+              compact
+                ? "mt-0 size-9 rounded-lg [&_svg]:size-[18px] sm:size-10 sm:[&_svg]:size-5"
+                : cn(leadingAlign === "center" ? "mt-0" : "mt-1", "size-14 rounded-xl [&_svg]:size-7 sm:size-16 sm:[&_svg]:size-[30px]"),
+              iconClassName,
+            )}>
               {icon}
             </span>
           )}
-          <div className="grid min-w-0 gap-2">
+          <div className={cn("grid min-w-0", compact ? "gap-1" : "gap-2")}>
             {eyebrow && (
-              <div className="text-xs font-semibold uppercase tracking-normal text-blue-700">
+              <div className="text-xs font-medium uppercase tracking-normal text-blue-700" data-slot="page-eyebrow">
                 {eyebrow}
               </div>
             )}
-            <div className="grid min-w-0 gap-1">
-              <h1 className={cn("text-3xl font-semibold leading-tight tracking-normal text-slate-950 sm:text-4xl", titleClassName)}>
+            <div className={cn("grid min-w-0", compact ? "gap-0.5" : "gap-1")}>
+              <h1 className={cn(
+                "font-bold leading-tight tracking-normal text-slate-950",
+                compact ? "text-2xl sm:text-[28px]" : "text-3xl sm:text-4xl",
+                titleClassName,
+              )} data-slot="page-title">
                 {title}
               </h1>
               {description && (
-                <p className={cn("max-w-4xl text-base leading-7 text-slate-500 sm:text-xl sm:leading-8", descriptionClassName)}>
+                <p className={cn(
+                  "max-w-4xl text-slate-500",
+                  compact ? "text-sm leading-6 sm:text-base" : "text-base leading-7 sm:text-xl sm:leading-8",
+                  descriptionClassName,
+                )}>
                   {description}
                 </p>
               )}
@@ -81,7 +97,7 @@ export function PageHeader({
             {meta && <div className="flex flex-wrap items-center gap-2">{meta}</div>}
           </div>
         </div>
-        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+        {actions && <div className={cn("flex shrink-0 flex-wrap items-center gap-2", compact && "sm:self-center")}>{actions}</div>}
       </div>
     </header>
   );

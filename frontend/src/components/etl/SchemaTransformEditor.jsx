@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -29,13 +29,16 @@ import {
   Search,
   Sparkles,
   SlidersHorizontal,
+  Table2,
   Trash2,
 } from "lucide-react";
 import TransformFunctionModal from "./TransformFunctionModal";
+import { EtlSectionHeader } from "./EtlSectionHeader";
 import { EtlStepHeader } from "./EtlStepHeader";
 import InlineAIInput from "../ai/InlineAIInput";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DataTable } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { apiConfig } from "@/services/apiClient";
@@ -174,6 +177,7 @@ export default function SchemaTransformEditor({
   sourceTabs = null,
   allSources = [], // All source nodes info: [{ id, datasetId, name, schema }]
   allowSqlTransform = true,
+  headerActions = null,
   portableTransforms = true,
   transformsDisabled = false,
 }) {
@@ -199,6 +203,7 @@ export default function SchemaTransformEditor({
   const [sqlPreviewVisible, setSqlPreviewVisible] = useState(false);
   const [sqlPreviewPanelOpen, setSqlPreviewPanelOpen] = useState(true);
   const [sqlValidation, setSqlValidation] = useState({ tone: "idle", message: "SQL 입력 후 문법 검증을 실행하세요." });
+  const sqlLineNumberRef = useRef(null);
   const lastVisualSqlRef = useRef("");
   const dragSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -215,6 +220,16 @@ export default function SchemaTransformEditor({
     const name = String(column.name || column.field || "");
     return name.toLowerCase().includes(sqlSourceQuery.trim().toLowerCase());
   });
+  const sqlLineNumbers = Array.from(
+    { length: Math.max(customSql.split("\n").length, 7) },
+    (_, index) => index + 1,
+  ).join("\n");
+
+  const syncSqlLineNumberScroll = (event) => {
+    if (sqlLineNumberRef.current) {
+      sqlLineNumberRef.current.scrollTop = event.currentTarget.scrollTop;
+    }
+  };
 
   const validateCustomSql = () => {
     const normalized = customSql.trim().toLowerCase();
@@ -724,10 +739,28 @@ export default function SchemaTransformEditor({
       onSqlChange(sql, "columns");
     }
   }, [targetSchema, activeTab]);
+  const sqlPreviewRows = useMemo(
+    () => sourceSampleRows.slice(0, 10).map((values, index) => ({ id: `schema-sql-preview-${index}`, values })),
+    [sourceSampleRows],
+  );
+  const sqlPreviewColumns = useMemo(
+    () => sourceSchema.map((column, columnIndex) => ({
+      cell: ({ row }) => {
+        const value = String(row.original.values[columnIndex] ?? "-");
+        return <span className="block max-w-64 truncate" title={value}>{value}</span>;
+      },
+      enableSorting: false,
+      header: column.name || column.field,
+      id: `schema-sql-preview-${columnIndex}`,
+      meta: { widthClassName: "min-w-40" },
+    })),
+    [sourceSchema],
+  );
 
   return (
     <div className="flex flex-col overflow-hidden bg-gray-50 rounded-lg border border-gray-200">
       <EtlStepHeader
+        actions={headerActions}
         icon={<SlidersHorizontal />}
         title="변환 설정"
       />
@@ -988,12 +1021,12 @@ export default function SchemaTransformEditor({
                             }
                             className="w-3.5 h-3.5 text-blue-600 rounded focus:ring-blue-500"
                           />
-                          <span className="text-gray-600">NOT NULL</span>
+                          <span className="text-gray-600">필수값</span>
                         </label>
 
                         {/* Default Value */}
                         <label className="flex items-center gap-1.5">
-                          <span className="text-gray-500">Default:</span>
+                          <span className="text-gray-500">누락 시 기본값</span>
                           <input
                             type="text"
                             value={col.defaultValue || ""}
@@ -1005,7 +1038,7 @@ export default function SchemaTransformEditor({
                                 e.target.value,
                               )
                             }
-                            placeholder="NULL"
+                            placeholder="설정 안 함"
                             className="w-20 px-1.5 py-0.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         </label>
@@ -1153,31 +1186,34 @@ export default function SchemaTransformEditor({
                     <span className="inline-flex items-center gap-2"><span className="size-2 rounded-full bg-blue-500" />Spark SQL</span>
                     <span>소스 데이터 참조: <code className="font-mono font-bold text-blue-950">FROM input</code></span>
                   </div>
-                  <div className={`schema-sql-validation flex items-center justify-center gap-2 border-b border-blue-100 px-3 text-center text-sm font-semibold ${sqlValidation.tone === "error" ? "bg-red-50 text-red-600" : sqlValidation.tone === "success" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50/60 text-slate-600"}`}>
-                    {sqlValidation.tone === "error" ? <AlertCircle className="size-4" /> : sqlValidation.tone === "success" ? <CheckCircle2 className="size-4" /> : <Sparkles className="size-4" />}
+                  <div className="schema-sql-editor-surface">
+                    <pre ref={sqlLineNumberRef} aria-hidden="true" className="schema-sql-line-numbers">{sqlLineNumbers}</pre>
+                    <Textarea
+                      id="schema-sql-transform-editor"
+                      value={customSql}
+                      onChange={(event) => {
+                        setCustomSql(event.target.value);
+                        setSqlPreviewVisible(false);
+                        setSqlValidation({ tone: "idle", message: "변경된 SQL을 다시 검증하세요." });
+                      }}
+                      onScroll={syncSqlLineNumberScroll}
+                      placeholder="SELECT text, sentiment FROM input"
+                      className="schema-sql-editor-input"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <div className={`schema-sql-validation flex items-center justify-start gap-2 border-t border-blue-100 px-4 py-2.5 text-left text-sm font-semibold ${sqlValidation.tone === "error" ? "bg-red-50 text-red-600" : sqlValidation.tone === "success" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50/60 text-slate-600"}`}>
+                    {sqlValidation.tone === "error" ? <AlertCircle className="size-4 shrink-0" /> : sqlValidation.tone === "success" ? <CheckCircle2 className="size-4 shrink-0" /> : <Sparkles className="size-4 shrink-0" />}
                     <span>{sqlValidation.message}</span>
                   </div>
-                  <Textarea
-                    id="schema-sql-transform-editor"
-                    value={customSql}
-                    onChange={(event) => {
-                      setCustomSql(event.target.value);
-                      setSqlPreviewVisible(false);
-                      setSqlValidation({ tone: "idle", message: "변경된 SQL을 다시 검증하세요." });
-                    }}
-                    placeholder="SELECT text, sentiment FROM input"
-                    className="min-h-[210px] flex-1 resize-none rounded-none border-0 bg-white px-4 py-4 font-mono text-sm font-semibold leading-6 text-slate-950 caret-blue-600 shadow-none outline-none placeholder:text-slate-400 focus-visible:ring-0"
-                  />
                 </div>
               </div>
             </section>
           </div>
 
           <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/50 px-4 py-3">
-              <h3 className="text-sm font-bold text-slate-900">결과 미리보기</h3>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-500">최대 {Math.min(sourceSampleRows.length, 10)}개 행</span>
+            <EtlSectionHeader
+              actions={(
                 <button
                   aria-expanded={sqlPreviewPanelOpen}
                   aria-label={sqlPreviewPanelOpen ? "결과 미리보기 접기" : "결과 미리보기 펼치기"}
@@ -1188,23 +1224,22 @@ export default function SchemaTransformEditor({
                 >
                   {sqlPreviewPanelOpen ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                 </button>
-              </div>
-            </div>
+              )}
+              icon={<Table2 />}
+              title="결과 미리보기"
+            />
             {sqlPreviewPanelOpen && (sqlPreviewVisible && sourceSampleRows.length > 0 ? (
-              <div className="overflow-auto">
-                <table className="w-full min-w-[720px] border-collapse text-sm">
-                  <thead className="bg-slate-50 text-left text-xs font-bold text-slate-500">
-                    <tr>{sourceSchema.map((column) => <th key={column.name || column.field} className="border-b border-slate-200 px-4 py-3">{column.name || column.field}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {sourceSampleRows.slice(0, 10).map((row, rowIndex) => (
-                      <tr key={rowIndex} className="border-b border-slate-100 last:border-0">
-                        {sourceSchema.map((column, columnIndex) => <td key={`${column.name || column.field}-${columnIndex}`} className="max-w-64 truncate px-4 py-3 font-medium text-slate-800">{String(row[columnIndex] ?? "-")}</td>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                aria-label="SQL 변환 결과 미리보기 표"
+                cellClassName="text-sm font-medium text-slate-800"
+                columns={sqlPreviewColumns}
+                data={sqlPreviewRows}
+                enableSorting={false}
+                getRowId={(row) => row.id}
+                pagination={false}
+                tableClassName="min-w-[720px]"
+                viewportClassName="rounded-none border-0"
+              />
             ) : (
               <div className="grid min-h-[150px] place-items-center px-6 py-8 text-center text-sm font-semibold text-slate-400">
                 <span>{sqlPreviewVisible ? "표시할 샘플 행이 없습니다." : "먼저 문법 검증을 완료한 뒤 미리보기를 실행하세요."}</span>

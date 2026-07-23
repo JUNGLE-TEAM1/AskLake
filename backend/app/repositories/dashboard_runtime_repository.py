@@ -7,7 +7,6 @@ from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
-from app.repositories.dashboard_card_repository import ensure_dashboard_card_schema
 from app.schemas.dashboard import DashboardRuntimeMode, DashboardStatus
 
 
@@ -21,92 +20,18 @@ class DashboardRuntimeMetaRecord:
     updated_at: datetime
 
 
-def ensure_dashboard_runtime_schema(db: Session) -> None:
-    bind = db.get_bind()
-    if bind.dialect.name == "sqlite":
-        return
-
-    statements = [
-        """
-        CREATE TABLE IF NOT EXISTS dashboard_revisions (
-            id varchar(64) PRIMARY KEY,
-            dashboard_id varchar(64) NOT NULL,
-            kind varchar(32) NOT NULL,
-            version integer NOT NULL DEFAULT 1,
-            published_at timestamptz,
-            created_at timestamptz NOT NULL DEFAULT now(),
-            updated_at timestamptz NOT NULL DEFAULT now()
-        )
-        """,
-        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS dashboard_id varchar(64) NOT NULL DEFAULT ''",
-        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS kind varchar(32) NOT NULL DEFAULT 'draft'",
-        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1",
-        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS published_at timestamptz",
-        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
-        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
-        """
-        CREATE TABLE IF NOT EXISTS dashboard_pages (
-            id varchar(64) PRIMARY KEY,
-            revision_id varchar(64) NOT NULL REFERENCES dashboard_revisions(id) ON DELETE CASCADE,
-            title varchar(120) NOT NULL,
-            order_index integer NOT NULL DEFAULT 0,
-            created_at timestamptz NOT NULL DEFAULT now(),
-            updated_at timestamptz NOT NULL DEFAULT now()
-        )
-        """,
-        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS revision_id varchar(64) NOT NULL DEFAULT ''",
-        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS title varchar(120) NOT NULL DEFAULT 'Untitled page'",
-        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS order_index integer NOT NULL DEFAULT 0",
-        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
-        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
-        """
-        CREATE TABLE IF NOT EXISTS dashboard_widgets (
-            id varchar(64) PRIMARY KEY,
-            page_id varchar(64) NOT NULL REFERENCES dashboard_pages(id) ON DELETE CASCADE,
-            type varchar(32) NOT NULL,
-            title varchar(160),
-            dataset_id varchar(64),
-            query_id varchar(64),
-            layout jsonb NOT NULL DEFAULT '{}'::jsonb,
-            config jsonb NOT NULL DEFAULT '{}'::jsonb,
-            data jsonb NOT NULL DEFAULT '[]'::jsonb,
-            created_at timestamptz NOT NULL DEFAULT now(),
-            updated_at timestamptz NOT NULL DEFAULT now()
-        )
-        """,
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS page_id varchar(64) NOT NULL DEFAULT ''",
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS type varchar(32) NOT NULL DEFAULT 'bar_chart'",
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS title varchar(160)",
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS dataset_id varchar(64)",
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS query_id varchar(64)",
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS layout jsonb NOT NULL DEFAULT '{}'::jsonb",
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS config jsonb NOT NULL DEFAULT '{}'::jsonb",
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS data jsonb NOT NULL DEFAULT '[]'::jsonb",
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
-        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
-        "UPDATE dashboard_widgets SET layout = '{}'::jsonb WHERE layout IS NULL",
-        "UPDATE dashboard_widgets SET config = '{}'::jsonb WHERE config IS NULL",
-        "UPDATE dashboard_widgets SET data = '[]'::jsonb WHERE data IS NULL",
-        "CREATE INDEX IF NOT EXISTS dashboard_revisions_dashboard_kind_idx ON dashboard_revisions (dashboard_id, kind, version DESC)",
-        "CREATE INDEX IF NOT EXISTS dashboard_pages_revision_idx ON dashboard_pages (revision_id, order_index)",
-        "CREATE INDEX IF NOT EXISTS dashboard_widgets_page_idx ON dashboard_widgets (page_id, created_at)",
-    ]
-
-    for statement in statements:
-        db.execute(text(statement))
-    db.commit()
-
-
 class DashboardRuntimeRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
-        ensure_dashboard_runtime_schema(self.db)
 
     def get_dashboard_meta(self, dashboard_id: str) -> DashboardRuntimeMetaRecord | None:
-        self._ensure_dashboard_meta_table()
-        if self._dashboards_table_exists():
-            return self._get_dashboard_meta_from_card_list_table(dashboard_id)
-        return None
+        if not self._dashboards_table_exists():
+            return None
+        if not self._dashboard_meta_columns_ready():
+            raise RuntimeError(
+                "Dashboard schema is not ready. Run the Dashboard schema migration first."
+            )
+        return self._get_dashboard_meta_from_card_list_table(dashboard_id)
 
     def get_published_revision(self, dashboard_id: str) -> DashboardRevision | None:
         return self._get_revision_by_kind(dashboard_id, DashboardRuntimeMode.PUBLISHED)
@@ -266,6 +191,7 @@ class DashboardRuntimeRepository:
         if not self._dashboards_table_exists():
             return
 
+        dialect = self.db.get_bind().dialect.name
         columns = {column["name"] for column in inspect(self.db.connection()).get_columns("dashboards")}
         updates: list[str] = []
         published_at_value = self._iso_timestamp(published_at)
@@ -284,7 +210,7 @@ class DashboardRuntimeRepository:
             updates.append("status = 'published'")
         if "updated_at" in columns:
             updates.append("updated_at = :published_at")
-        if "payload" in columns:
+        if "payload" in columns and dialect == "postgresql":
             updates.append(
                 """
                 payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
@@ -293,6 +219,21 @@ class DashboardRuntimeRepository:
                     'status', 'published',
                     'updated', CAST(:updated AS text),
                     'updatedAtValue', CAST(:updated_at_value AS text)
+                )
+                """.strip()
+            )
+        elif "payload" in columns and dialect == "sqlite":
+            updates.append(
+                """
+                payload = json_patch(
+                    COALESCE(payload, '{}'),
+                    json_object(
+                        'publishedRevisionId', CAST(:published_revision_id AS text),
+                        'hasPublishedRevision', 1,
+                        'status', 'published',
+                        'updated', CAST(:updated AS text),
+                        'updatedAtValue', CAST(:updated_at_value AS text)
+                    )
                 )
                 """.strip()
             )
@@ -355,18 +296,6 @@ class DashboardRuntimeRepository:
 
     def _dashboards_table_exists(self) -> bool:
         return inspect(self.db.connection()).has_table("dashboards")
-
-    def _ensure_dashboard_meta_table(self) -> None:
-        bind = self.db.get_bind()
-        if bind.dialect.name == "sqlite":
-            return
-
-        if not self._dashboards_table_exists():
-            ensure_dashboard_card_schema(self.db)
-            return
-
-        if not self._dashboard_meta_columns_ready():
-            ensure_dashboard_card_schema(self.db)
 
     def _dashboard_meta_columns_ready(self) -> bool:
         columns = {column["name"] for column in inspect(self.db.connection()).get_columns("dashboards")}

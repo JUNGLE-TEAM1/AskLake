@@ -5,6 +5,7 @@ import { CommandBar } from "@/components/ui/command-bar";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
+import { EtlWizardHeaderActionsPortal } from "../layout/EtlWizardHeaderActionsPortal";
 
 export function CreationFlowLayout({
   actions,
@@ -24,13 +25,15 @@ export function CreationFlowLayout({
     .join(" ");
 
   return (
-    <div className={layoutClassName}>
-      <div className="content-main">
-        {actions && <div className="creation-flow-topbar">{actions}</div>}
-        {children}
+    <>
+      {actions && <EtlWizardHeaderActionsPortal>{actions}</EtlWizardHeaderActionsPortal>}
+      <div className={layoutClassName}>
+        <div className="content-main">
+          {children}
+        </div>
+        {side ?? null}
       </div>
-      {side ?? null}
-    </div>
+    </>
   );
 }
 
@@ -42,7 +45,6 @@ export function CreationTopActions({
   prevLabel = "이전",
   showPrev = true,
   split = false,
-  useShadcnStyles = false,
 }: {
   nextDisabled?: boolean;
   nextLabel?: string;
@@ -51,12 +53,11 @@ export function CreationTopActions({
   prevLabel?: string;
   showPrev?: boolean;
   split?: boolean;
-  useShadcnStyles?: boolean;
 }) {
   return (
     <CommandBar className={split ? "creation-top-actions is-split" : "creation-top-actions"} density="compact">
-      {showPrev ? <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button> : null}
-      <Button className={useShadcnStyles ? undefined : "primary-button"} type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
+      {showPrev ? <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button> : null}
+      <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
     </CommandBar>
   );
 }
