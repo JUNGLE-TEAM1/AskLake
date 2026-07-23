@@ -58,6 +58,7 @@ export function DashboardRuntimeShell({
   onToggleDatasetSidebar,
   onToggleInspector,
   pages,
+  publishUnavailableReason,
   renamingPageId,
   selectedPageId,
   shareLink,
@@ -93,6 +94,7 @@ export function DashboardRuntimeShell({
   onToggleDatasetSidebar?: () => void;
   onToggleInspector?: () => void;
   pages: DashboardPageTab[];
+  publishUnavailableReason?: string | null;
   renamingPageId?: string | null;
   selectedPageId: string | null;
   shareLink?: string | null;
@@ -149,6 +151,7 @@ export function DashboardRuntimeShell({
         autoRefreshStatus={autoRefreshStatus}
         hasPublishedRevision={hasPublishedRevision}
         isPublishing={isPublishing}
+        publishUnavailableReason={publishUnavailableReason}
         isRenaming={isRenamingTitle}
         isRefreshing={isRefreshing}
         mode={mode}

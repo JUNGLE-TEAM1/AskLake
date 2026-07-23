@@ -5,6 +5,10 @@ import { useDashboardLayoutHistory } from "./runtime/useDashboardLayoutHistory";
 import { removeRuntimeWidget } from "./runtime/dashboardRuntimeMutations";
 import { dashboardRuntimeErrorMessage } from "./runtime/dashboardRuntimeErrors";
 import { dashboardPublishPreflight } from "./runtime/dashboardPublishPreflight";
+import {
+  dashboardPublishUnavailableReason,
+  publishSettledDashboard,
+} from "./runtime/dashboardPublishCoordinator";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDashboardRuntimeResources } from "./runtime/useDashboardRuntimeResources";
 import { useDashboardAutoRefresh } from "./runtime/useDashboardAutoRefresh";
@@ -296,7 +300,13 @@ export function DashboardPage({
     setWidgetScrollTargetId,
   });
 
-  const { updateDraftWidgetLayouts } = useDraftWidgetLayouts({
+  const {
+    hasLayoutSaveFailure,
+    isSavingLayout,
+    resetLayoutSaveFailure,
+    updateDraftWidgetLayouts,
+    waitForPendingLayoutSaves,
+  } = useDraftWidgetLayouts({
     dashboardId: runtimeSelection.dashboardId,
     draftRuntime,
     onAction,
@@ -314,6 +324,24 @@ export function DashboardPage({
     selectedWidgetIdsKey: selectedDraftWidgetIds,
     selectedWidgets: selectedDraftWidgets,
     updateLayouts: updateDraftWidgetLayouts,
+  });
+  const isDraftMutationPending = Boolean(
+    pageMutations.isAddingPage
+    || pageMutations.deletingPageId
+    || pageMutations.renamingPageId
+    || widgetMutations.deletingWidgetId
+    || widgetMutations.updatingWidgetId
+    || isCreatingDatasetWidget
+    || isCreatingToolbarWidget
+    || isRenamingRuntimeTitle
+  );
+  const publishUnavailableReason = dashboardPublishUnavailableReason({
+    draftError,
+    draftLoading,
+    draftRuntime,
+    hasLayoutSaveFailure,
+    isDraftMutationPending,
+    isSavingLayout,
   });
 
   useEffect(() => {
@@ -516,25 +544,46 @@ export function DashboardPage({
   const publishDraftRuntime = async () => {
     if (runtimeSelection.mode !== "draft" || isPublishingRuntime) return;
 
-    const preflightIssues = dashboardPublishPreflight(draftRuntime);
-    if (preflightIssues.length) {
-      const [firstIssue] = preflightIssues;
-      const location = firstIssue.widgetTitle
-        ? `${firstIssue.pageTitle} · ${firstIssue.widgetTitle}`
-        : firstIssue.pageTitle;
-      const remainingIssueCount = preflightIssues.length - 1;
-      setRuntimeNotice({
-        message: `게시 전 확인: ${location} — ${firstIssue.message}${remainingIssueCount ? ` 외 ${remainingIssueCount}건` : ""}`,
-        tone: "error",
-      });
-      onAction("dashboard.runtime.publish_blocked", `/api/dashboards/${runtimeSelection.dashboardId}/publish`, runtimeSelection.dashboardId, "failed");
+    const blockingReason = dashboardPublishUnavailableReason({
+      draftError,
+      draftLoading,
+      draftRuntime,
+      hasLayoutSaveFailure,
+      isDraftMutationPending,
+      isSavingLayout: false,
+    });
+    if (blockingReason) {
+      setRuntimeNotice({ message: blockingReason, tone: "error" });
       return;
     }
 
     setIsPublishingRuntime(true);
     try {
-      await cleanupEmptyVisualizationRequestWidgets();
-      await publishRuntimeDashboard(runtimeSelection.dashboardId);
+      const result = await publishSettledDashboard({
+        cleanup: cleanupEmptyVisualizationRequestWidgets,
+        preflight: () => {
+          const preflightIssues = dashboardPublishPreflight(draftRuntime);
+          if (!preflightIssues.length) return null;
+          const [firstIssue] = preflightIssues;
+          const location = firstIssue.widgetTitle
+            ? `${firstIssue.pageTitle} · ${firstIssue.widgetTitle}`
+            : firstIssue.pageTitle;
+          const remainingIssueCount = preflightIssues.length - 1;
+          return `게시 전 확인: ${location} — ${firstIssue.message}${remainingIssueCount ? ` 외 ${remainingIssueCount}건` : ""}`;
+        },
+        publish: () => publishRuntimeDashboard(runtimeSelection.dashboardId),
+        waitForPendingLayoutSaves,
+      });
+      if (result.status === "layout-save-failed") {
+        setRuntimeNotice({ message: "레이아웃 저장 실패를 해결한 뒤 다시 게시해 주세요.", tone: "error" });
+        onAction("dashboard.runtime.publish_blocked", `/api/dashboards/${runtimeSelection.dashboardId}/publish`, runtimeSelection.dashboardId, "failed");
+        return;
+      }
+      if (result.status === "preflight-failed") {
+        setRuntimeNotice({ message: result.message, tone: "error" });
+        onAction("dashboard.runtime.publish_blocked", `/api/dashboards/${runtimeSelection.dashboardId}/publish`, runtimeSelection.dashboardId, "failed");
+        return;
+      }
       updateRuntimeListStatus(runtimeSelection.dashboardId, "published");
       setRuntimeNotice({ message: "대시보드를 게시했습니다.", tone: "success" });
       setRuntimeShareLink(null);
@@ -646,7 +695,11 @@ export function DashboardPage({
       setAutoRefreshEnabled: dashboardAutoRefresh.setEnabled,
       renamePage: pageMutations.renamePage,
       renameTitle: renameRuntimeDashboardTitle,
-      retryDraft: () => void loadDraftRuntime(runtimeSelection.dashboardId),
+      retryDraft: () => {
+        void loadDraftRuntime(runtimeSelection.dashboardId).then((runtime) => {
+          if (runtime) resetLayoutSaveFailure();
+        });
+      },
       retryPublished: () => void loadPublishedRuntime(runtimeSelection.dashboardId),
       retryWidgetData,
       selectDataset: selectRuntimeDataset,
@@ -679,6 +732,7 @@ export function DashboardPage({
       isDatasetSidebarOpen,
       isCreatingToolbarWidget,
       isPublishing: isPublishingRuntime,
+      publishUnavailableReason,
       isRenamingTitle: isRenamingRuntimeTitle,
       isRefreshing: isRefreshingRuntime,
       autoRefreshEnabled: dashboardAutoRefresh.enabled,

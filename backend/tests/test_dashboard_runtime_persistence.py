@@ -34,12 +34,12 @@ from app.services.dashboard_runtime_service import DashboardRuntimeService
 
 
 class EmptyCatalogRepository:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, payloads: dict[str, dict] | None = None) -> None:
         self.db = db
+        self.payloads = payloads or {}
 
-    @staticmethod
-    def get_dataset_payload(_dataset_id: str):
-        return None
+    def get_dataset_payload(self, dataset_id: str):
+        return self.payloads.get(dataset_id)
 
 
 class PersistenceDashboardRuntimeService(DashboardRuntimeService):
@@ -134,10 +134,14 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.engine.dispose()
 
-    def service(self, db: Session) -> PersistenceDashboardRuntimeService:
+    def service(
+        self,
+        db: Session,
+        catalog_payloads: dict[str, dict] | None = None,
+    ) -> PersistenceDashboardRuntimeService:
         return PersistenceDashboardRuntimeService(
             DashboardRuntimeRepository(db),
-            EmptyCatalogRepository(db),  # type: ignore[arg-type]
+            EmptyCatalogRepository(db, catalog_payloads),  # type: ignore[arg-type]
         )
 
     @staticmethod
@@ -168,7 +172,7 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
                     value_key="value",
                     format=DashboardWidgetFormat.NUMBER,
                 ),
-                data=[{"value": 7}],
+                data=[{"membership": "vip", "value": 7}],
             ),
             ActorContext(name="Admin User", role="admin"),
         )
@@ -229,7 +233,7 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
             self.assertEqual(widget.config.format, DashboardWidgetFormat.CURRENCY)
             self.assertEqual(widget.config.filters[0].column, "membership")
             self.assertEqual(widget.config.filters[0].value, "vip")
-            self.assertEqual(widget.data, [{"value": 7}])
+            self.assertEqual(widget.data, [{"membership": "vip", "value": 7}])
 
             published = service.publish_dashboard(self.dashboard_id, actor)
             self.assertEqual(published.dashboard_id, self.dashboard_id)
@@ -371,6 +375,108 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
             first_widget = repository.get_widget(first_widget_id)
             self.assertIsNotNone(first_widget)
             self.assertEqual(first_widget.layout, {"x": 0, "y": 0, "w": 4, "h": 3})
+
+    def test_layout_save_rejects_out_of_bounds_and_colliding_final_page_state(self) -> None:
+        actor = ActorContext(name="Admin User", role="admin")
+        with Session(self.engine) as db:
+            service = self.service(db)
+            draft = service.ensure_draft_runtime(self.dashboard_id, actor)
+            page_id = draft.pages[0].id
+            first_widget_id = self.create_metric_widget(service, page_id, title="First")
+            second_widget_id = self.create_metric_widget(service, page_id, title="Second")
+
+            with self.assertRaises(ApiError) as out_of_bounds:
+                service.save_draft_layouts(
+                    self.dashboard_id,
+                    SaveDraftLayoutsRequest(
+                        page_id=page_id,
+                        layouts=[DraftLayoutItem(
+                            widget_id=first_widget_id,
+                            x=10,
+                            y=0,
+                            w=4,
+                            h=3,
+                        )],
+                    ),
+                    actor,
+                )
+            self.assertEqual(out_of_bounds.exception.code, "DASHBOARD_LAYOUT_INVALID")
+
+            with self.assertRaises(ApiError) as collision:
+                service.save_draft_layouts(
+                    self.dashboard_id,
+                    SaveDraftLayoutsRequest(
+                        page_id=page_id,
+                        layouts=[DraftLayoutItem(
+                            widget_id=second_widget_id,
+                            x=2,
+                            y=0,
+                            w=4,
+                            h=3,
+                        )],
+                    ),
+                    actor,
+                )
+            self.assertEqual(collision.exception.code, "DASHBOARD_LAYOUT_INVALID")
+            self.assertEqual(
+                service.repository.get_widget(first_widget_id).layout,
+                {"x": 0, "y": 0, "w": 4, "h": 3},
+            )
+
+    def test_publish_rejects_invalid_widget_on_inactive_page_without_creating_revision(self) -> None:
+        actor = ActorContext(name="Admin User", role="admin")
+        catalog_payloads = {
+            "dataset-sales": {
+                "schema": [["region", "string"], ["revenue", "double"]],
+            },
+        }
+        with Session(self.engine) as db:
+            service = self.service(db, catalog_payloads)
+            draft = service.ensure_draft_runtime(self.dashboard_id, actor)
+            second_page = service.repository.create_page(
+                draft.revision.id,
+                "Inactive page",
+                1,
+            )
+            service.repository.create_widget(
+                second_page.id,
+                widget_type="bar_chart",
+                title="Invalid revenue",
+                dataset_id="dataset-sales",
+                layout={"x": 0, "y": 0, "w": 6, "h": 4},
+                config={
+                    "aggregation": "sum",
+                    "color": {"colors": ["#2563eb"]},
+                    "xKey": "region",
+                    "yKey": "missing_revenue",
+                },
+                data=[],
+            )
+            service.repository.create_widget(
+                second_page.id,
+                widget_type="metric",
+                title="Invalid numeric field",
+                dataset_id="dataset-sales",
+                layout={"x": 6, "y": 0, "w": 6, "h": 4},
+                config={
+                    "aggregation": "sum",
+                    "valueKey": "region",
+                },
+                data=[],
+            )
+
+            with self.assertRaises(ApiError) as blocked:
+                service.publish_dashboard(self.dashboard_id, actor)
+
+            self.assertEqual(blocked.exception.code, "DASHBOARD_PUBLISH_BLOCKED")
+            self.assertEqual(blocked.exception.status_code, 409)
+            issue_codes = {
+                issue["code"]
+                for issue in (blocked.exception.details or {}).get("issues", [])
+            }
+            self.assertIn("WIDGET_FIELD_NOT_FOUND", issue_codes)
+            self.assertIn("WIDGET_FIELD_NOT_NUMERIC", issue_codes)
+            self.assertIsNone(service.repository.get_published_revision(self.dashboard_id))
 
 
 if __name__ == "__main__":

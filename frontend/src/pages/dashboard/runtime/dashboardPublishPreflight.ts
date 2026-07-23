@@ -4,7 +4,6 @@ import {
   hasLayoutOutOfBounds,
   toCollisionLayout,
 } from "./dashboardLayoutUtils.ts";
-import { widgetDataHealthMessage } from "./widgetDataHealth.ts";
 
 export type DashboardPublishPreflightIssue = {
   message: string;
@@ -36,18 +35,6 @@ export function dashboardPublishPreflight(runtime: DashboardRuntimeResponse | nu
         pageTitle: page.title,
       });
     }
-
-    widgets.forEach((widget) => {
-      const message = widgetDataHealthMessage(widget);
-      if (!message) return;
-      issues.push({
-        message,
-        pageId: page.id,
-        pageTitle: page.title,
-        widgetId: widget.id,
-        widgetTitle: widget.title ?? "이름 없는 위젯",
-      });
-    });
 
     return issues;
   });

@@ -11,6 +11,10 @@ import {
 } from "../src/pages/dashboard/runtime/draftWidgetLayoutPersistence.ts";
 import { hasAnyLayoutCollision } from "../src/pages/dashboard/runtime/dashboardLayoutUtils.ts";
 import { dashboardPublishPreflight } from "../src/pages/dashboard/runtime/dashboardPublishPreflight.ts";
+import {
+  dashboardPublishUnavailableReason,
+  publishSettledDashboard,
+} from "../src/pages/dashboard/runtime/dashboardPublishCoordinator.ts";
 import { layoutFromDraft } from "../src/pages/dashboard/runtime/widgetLayoutEditor.ts";
 import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../src/types/dashboard.ts";
 
@@ -20,6 +24,14 @@ const dashboardCanvasSource = readFileSync(
 );
 const dashboardRuntimeViewSource = readFileSync(
   new URL("../src/pages/dashboard/runtime/DashboardRuntimeView.tsx", import.meta.url),
+  "utf8",
+);
+const dashboardEditToolbarSource = readFileSync(
+  new URL("../src/pages/dashboard/runtime/DashboardEditToolbar.tsx", import.meta.url),
+  "utf8",
+);
+const dashboardTopBarSource = readFileSync(
+  new URL("../src/pages/dashboard/runtime/DashboardTopBar.tsx", import.meta.url),
   "utf8",
 );
 
@@ -117,25 +129,63 @@ test("a colliding layout is rejected before a layout save request is built", () 
   assert.equal(hasAnyLayoutCollision(collidingLayout), true);
 });
 
-test("publishing is blocked when a saved layout collides or widget data no longer matches its field settings", () => {
+test("publishing is blocked when a saved layout collides", () => {
   const runtime = draftRuntime();
   runtime.widgetsByPageId["page-1"] = [
-    {
-      ...metricWidget("widget-1", 0, 0),
-      config: { aggregation: "sum", valueKey: "amount" },
-      data: [{ label: "A" }],
-      title: "매출",
-    },
+    metricWidget("widget-1", 0, 0),
     metricWidget("widget-2", 2, 0),
   ];
 
   const issues = dashboardPublishPreflight(runtime);
 
   assert.equal(issues.some((issue) => issue.message === "겹쳐 있는 위젯이 있습니다."), true);
-  assert.equal(
-    issues.some((issue) => issue.widgetTitle === "매출" && issue.message.includes("amount")),
-    true,
-  );
+});
+
+test("publish waits for pending layout persistence before cleanup and the publish API", async () => {
+  const events: string[] = [];
+  let finishLayoutSave: ((saved: boolean) => void) | undefined;
+  const pending = publishSettledDashboard({
+    cleanup: async () => {
+      events.push("cleanup");
+    },
+    preflight: () => {
+      events.push("preflight");
+      return null;
+    },
+    publish: async () => {
+      events.push("publish");
+    },
+    waitForPendingLayoutSaves: () => {
+      events.push("wait");
+      return new Promise<boolean>((resolve) => {
+        finishLayoutSave = resolve;
+      });
+    },
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(events, ["wait"]);
+  finishLayoutSave?.(true);
+  assert.deepEqual(await pending, { status: "published" });
+  assert.deepEqual(events, ["wait", "preflight", "cleanup", "publish"]);
+});
+
+test("a missing, loading, failed, or mutating draft cannot publish", () => {
+  const base = {
+    draftError: null,
+    draftLoading: false,
+    draftRuntime: draftRuntime(),
+    hasLayoutSaveFailure: false,
+    isDraftMutationPending: false,
+    isSavingLayout: false,
+  };
+
+  assert.match(dashboardPublishUnavailableReason({ ...base, draftRuntime: null }) ?? "", /revision/);
+  assert.match(dashboardPublishUnavailableReason({ ...base, draftLoading: true }) ?? "", /불러온 뒤/);
+  assert.match(dashboardPublishUnavailableReason({ ...base, draftError: "failed" }) ?? "", /오류/);
+  assert.match(dashboardPublishUnavailableReason({ ...base, isDraftMutationPending: true }) ?? "", /저장이 끝나면/);
+  assert.equal(dashboardPublishUnavailableReason(base), null);
+  assert.match(dashboardTopBarSource, /disabled=\{isPublishing \|\| Boolean\(publishUnavailableReason\)\}/);
 });
 
 test("the draft editor defaults to the canonical 12-column breakpoint while allowing an explicit preview", () => {
@@ -183,4 +233,6 @@ test("draft previews use read-only responsive breakpoints while published dashbo
   assert.match(dashboardRuntimeViewSource, /editable=\{layoutPreviewBreakpoint === "lg"\}/);
   assert.match(dashboardRuntimeViewSource, /previewBreakpoint=\{layoutPreviewBreakpoint\}/);
   assert.match(dashboardRuntimeViewSource, /<DashboardCanvas editable=\{false\} widgets=\{selectedPublishedWidgets\} onRetryWidgetData=\{onRetryWidgetData\} \/>/);
+  assert.match(dashboardEditToolbarSource, /<ToggleGroup[\s\S]*aria-label="반응형 미리보기"/);
+  assert.doesNotMatch(dashboardEditToolbarSource, /disabled: layoutPreview ===/);
 });

@@ -61,6 +61,7 @@ type DashboardRuntimeState = {
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
   publishedRuntime: DashboardRuntimeResponse | null;
+  publishUnavailableReason: string | null;
   renamingPageId: string | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
@@ -191,6 +192,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     notice,
     pages,
     publishedRuntime,
+    publishUnavailableReason,
     renamingPageId,
     runtimeError,
     runtimeLoading,
@@ -531,6 +533,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         hasPublishedRevision={hasPublishedRevision}
         isAddingPage={isAddingPage}
         isPublishing={isPublishing}
+        publishUnavailableReason={publishUnavailableReason}
         isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
         inspector={isInspectorAvailable && isInspectorOpen && isAssistantInspectorOpen ? (

@@ -33,6 +33,7 @@ export function useDraftPageMutations({
   setSelectedWidgetId: (widgetId: string | null) => void;
 }) {
   const [isAddingPage, setIsAddingPage] = useState(false);
+  const [deletingPageId, setDeletingPageId] = useState<string | null>(null);
   const [renamingPageId, setRenamingPageId] = useState<string | null>(null);
 
   const addPage = async () => {
@@ -59,7 +60,8 @@ export function useDraftPageMutations({
   };
 
   const deletePage = async (pageId: string) => {
-    if (mode !== "draft") return;
+    if (mode !== "draft" || deletingPageId) return;
+    setDeletingPageId(pageId);
     try {
       const response = await deleteDraftPage(dashboardId, pageId);
       const remainingPageId = draftRuntime?.pages.find((page) => page.id !== pageId)?.id
@@ -82,6 +84,8 @@ export function useDraftPageMutations({
         tone: "error",
       });
       onAction("dashboard.page.delete_failed", `/api/dashboards/${dashboardId}/draft/pages/${pageId}`, pageId, "failed");
+    } finally {
+      setDeletingPageId(null);
     }
   };
 
@@ -114,5 +118,5 @@ export function useDraftPageMutations({
     }
   };
 
-  return { addPage, deletePage, isAddingPage, renamePage, renamingPageId };
+  return { addPage, deletePage, deletingPageId, isAddingPage, renamePage, renamingPageId };
 }

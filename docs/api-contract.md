@@ -3361,7 +3361,12 @@ Response `200 OK`:
 { "ok": true }
 ```
 
-서버는 `x`, `y`, `w`, `h`, `minW`, `minH`를 유한 숫자로 정규화하고, 음수 좌표나 1보다 작은 크기를 보정합니다.
+서버는 요청에 없는 widget을 포함한 현재 page 전체 layout과 요청 batch를 먼저 합칩니다. `x/y/w/h`는 정수여야 하며, 저장된 `minW/minH`, 12열 범위와 widget 간 비충돌 조건을 모두 만족해야 합니다. Layout endpoint는 `minW/minH`를 낮추는 용도로 사용할 수 없으며 기존 widget 최소 크기를 보존합니다.
+
+실패:
+
+- 같은 widget이 요청에 중복되거나 최종 page layout이 범위·최소 크기·비충돌 조건을 위반하면 `422 DASHBOARD_LAYOUT_INVALID`.
+- 검증 실패 시 일부 widget만 먼저 저장하지 않고 기존 page layout을 유지합니다.
 
 #### 8.5.10 Publish
 
@@ -3369,9 +3374,12 @@ Response `200 OK`:
 
 동작:
 
-1. 현재 draft revision을 깊은 복사합니다.
-2. 새 revision을 `kind = "published"`로 저장합니다.
-3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updated`, `updatedAtValue`와 `dashboards.updated_at`를 갱신합니다.
+1. Draft revision row를 잠가 다른 page/widget/layout mutation과 게시를 직렬화합니다.
+2. 현재 draft revision의 모든 page layout을 12열 범위·최소 크기·비충돌 조건으로 다시 검증합니다.
+3. Catalog Dataset widget의 persisted field/filter 설정을 현재 Catalog schema와 대조하고 숫자 집계 field의 논리 타입을 확인합니다.
+4. 검증된 draft revision을 깊은 복사합니다.
+5. 새 revision을 `kind = "published"`로 저장합니다.
+6. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updated`, `updatedAtValue`와 `dashboards.updated_at`를 갱신합니다.
 
 Draft editor에서 page를 추가/삭제하거나 widget layout을 바꾼 뒤 이 endpoint를 호출하면, 그 시점의 draft pages/widgets가 published viewer의 `GET /api/dashboards/{dashboardId}/published` 응답에 반영됩니다.
 
@@ -3390,6 +3398,9 @@ Response `200 OK`:
 - dashboard가 없으면 `404 NOT_FOUND`.
 - draft revision이 없으면 `422 NO_DRAFT_REVISION`.
 - dashboard `manage` 권한이 없으면 `403 FORBIDDEN`.
+- layout 또는 Catalog widget 설정이 유효하지 않으면 `409 DASHBOARD_PUBLISH_BLOCKED`. Response `error.details.issues`는 `pageId`, 선택적인 `widgetId`/`widgetTitle`, 안정적인 issue `code`, 조치 메시지를 포함하며 published revision과 dashboard card metadata를 변경하지 않습니다.
+
+Catalog schema metadata 부재·필드 누락·확인된 숫자 타입 불일치는 게시를 차단합니다. Publish validation은 전체 물리 row를 조회하지 않으므로 일시적인 Trino/DuckDB/ClickHouse 조회 실패는 차단하지 않습니다. 해당 오류는 published viewer의 widget별 `dataStatus=error`와 수동 새로고침으로 처리하고 마지막 성공 published snapshot을 유지합니다.
 
 ### 8.5.11 Kafka Continuous widget freshness·result 조회
 

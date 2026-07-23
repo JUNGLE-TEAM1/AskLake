@@ -36,8 +36,17 @@ class DashboardRuntimeRepository:
     def get_published_revision(self, dashboard_id: str) -> DashboardRevision | None:
         return self._get_revision_by_kind(dashboard_id, DashboardRuntimeMode.PUBLISHED)
 
-    def get_draft_revision(self, dashboard_id: str) -> DashboardRevision | None:
-        return self._get_revision_by_kind(dashboard_id, DashboardRuntimeMode.DRAFT)
+    def get_draft_revision(
+        self,
+        dashboard_id: str,
+        *,
+        for_update: bool = False,
+    ) -> DashboardRevision | None:
+        return self._get_revision_by_kind(
+            dashboard_id,
+            DashboardRuntimeMode.DRAFT,
+            for_update=for_update,
+        )
 
     def get_next_revision_version(self, dashboard_id: str) -> int:
         statement = (
@@ -282,7 +291,13 @@ class DashboardRuntimeRepository:
         self.db.execute(delete(DashboardRevision).where(DashboardRevision.dashboard_id == dashboard_id))
         self.db.flush()
 
-    def _get_revision_by_kind(self, dashboard_id: str, kind: DashboardRuntimeMode) -> DashboardRevision | None:
+    def _get_revision_by_kind(
+        self,
+        dashboard_id: str,
+        kind: DashboardRuntimeMode,
+        *,
+        for_update: bool = False,
+    ) -> DashboardRevision | None:
         statement = (
             select(DashboardRevision)
             .where(
@@ -292,6 +307,8 @@ class DashboardRuntimeRepository:
             .order_by(DashboardRevision.version.desc(), DashboardRevision.created_at.desc())
             .limit(1)
         )
+        if for_update:
+            statement = statement.with_for_update()
         return self.db.scalars(statement).first()
 
     def _dashboards_table_exists(self) -> bool:

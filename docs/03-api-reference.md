@@ -574,8 +574,8 @@ type ScheduledJobRunResponse = {
 | `POST` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets` | draft page에 widget 추가 후 저장된 widget 한 개 반환 |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget 수정 후 저장된 widget 한 개 반환 |
 | `DELETE` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget 삭제 |
-| `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch 저장 |
-| `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
+| `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | 요청 배치를 현재 page layout과 합쳐 12열 범위·최소 크기·충돌을 검증한 뒤 저장. 실패는 `422 DASHBOARD_LAYOUT_INVALID` |
+| `POST` | `/api/dashboards/{dashboardId}/publish` | 전체 Draft의 layout과 Catalog widget field/type 정합성을 검증한 뒤 dashboard 게시. 실패는 `409 DASHBOARD_PUBLISH_BLOCKED`이며 published revision을 만들지 않음 |
 | `POST` | `/api/dashboards/assistant` | Dashboard 질문/시각화 요청을 private Gateway로 처리하고 검증된 action·실사용 근거 반환 |
 | `POST` | `/api/review-analysis/schema-suggestion` | bounded source schema/sample 기반 review output schema 제안 |
 | `POST` | `/api/review-analysis/preview` | 최대 10개 실제 row를 Gateway로 분석해 요청 컬럼만 반환 |
@@ -826,6 +826,8 @@ type DashboardRuntimeResponse = {
 `POST /api/dashboards`는 랜딩 페이지의 새 대시보드 생성 버튼에서 사용한다. 생성 즉시 `status: "draft"` dashboard card를 DB에 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. 편집용 draft revision/page/widget은 `위젯 편집` 이후 `POST /api/dashboards/{dashboardId}/draft/ensure`에서 준비한다.
 
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
+
+Draft layout 저장은 부분 batch도 허용하지만 서버가 같은 page의 기존 widget layout과 합친 최종 12열 상태를 검증한다. `POST /publish`는 모든 page를 다시 검사하고, Catalog Dataset widget의 필수 field·표시 column·filter column이 현재 Catalog schema에 존재하는지와 숫자 집계 field의 논리 타입을 확인한다. 이 검증은 전체 물리 row를 읽지 않는다. 일시적인 Trino/DuckDB/ClickHouse 조회 실패는 publish 차단 조건이 아니며 기존 published snapshot과 widget별 수동 새로고침 오류 계약을 유지한다.
 
 Catalog `datasetId`를 연결한 Widget은 browser가 보낸 `data`와 Catalog `sampleRows`를 저장 데이터로 사용하지 않는다. Runtime 조회 시 backend는 actor의 dataset `query` permission과 governance를 storage 접근 전에 검사한다. Iceberg Dataset은 Catalog의 `icebergSnapshotId`에 `FOR VERSION AS OF`를 적용한 Trino query로 읽고, 전환 전 CSV/JSON/JSONL/Parquet segment만 DuckDB에 등록한다. `materializationMode`가 명시되면 그 값을 우선하고, 미지정 Kafka run은 `delta`, 그 외 run은 `snapshot`으로 판정한다. 원격 file segment는 allowlist와 누적 byte/object 예산을 통과해야 하고 모든 query는 resource/timeout 경계 안에서 실행한다. chart/metric은 최대 500개 그룹으로 집계하며 table은 최대 500행 preview만 반환한다. 응답 `config.sourceConfig`는 편집 원본을, `dataMode`는 `server_aggregated` 또는 `server_preview`를 나타낸다. 권한이 없으면 `DASHBOARD_DATA_FORBIDDEN`, 삭제된 Catalog dataset 또는 물리 데이터를 읽을 수 없으면 `DASHBOARD_DATA_UNAVAILABLE` error config와 빈 data를 해당 widget에 반환한다. `queryId`가 있는 bounded SQL snapshot은 Catalog payload가 없어도 최대 500행을 유지한다.
 

@@ -24,6 +24,7 @@ export function DashboardTopBar({
   onRefresh,
   onRenameTitle,
   onShare,
+  publishUnavailableReason,
   title,
 }: {
   autoRefreshEnabled: boolean;
@@ -41,6 +42,7 @@ export function DashboardTopBar({
   onRefresh?: () => void;
   onRenameTitle?: (title: string) => Promise<void> | void;
   onShare?: () => void;
+  publishUnavailableReason?: string | null;
   title: string;
 }) {
   void autoRefreshEnabled;
@@ -135,7 +137,8 @@ export function DashboardTopBar({
           <>
             <Button
               className="asklake-dashboard-action primary"
-              disabled={isPublishing}
+              disabled={isPublishing || Boolean(publishUnavailableReason)}
+              title={publishUnavailableReason ?? "현재 Draft를 게시합니다."}
               type="button"
               size="sm"
               variant="primary"

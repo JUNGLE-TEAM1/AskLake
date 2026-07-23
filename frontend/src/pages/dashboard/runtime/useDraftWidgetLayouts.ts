@@ -15,6 +15,7 @@ import {
   type RuntimeLayoutSnapshot,
 } from "./draftWidgetLayoutPersistence";
 import { hasAnyLayoutCollision } from "./dashboardLayoutUtils";
+import { useDashboardLayoutSaveCoordinator } from "./useDashboardLayoutSaveCoordinator";
 
 type RuntimeNotice = {
   message: string;
@@ -50,21 +51,11 @@ export function useDraftWidgetLayouts({
   const draftRuntimeRef = useRef(draftRuntime);
   const lastSavedLayoutByPageRef = useRef(new Map<string, RuntimeLayoutSnapshot>());
   const layoutMutationRevisions = useRef(new MutationRevisionGate());
-  const layoutSaveQueueRef = useRef(new Map<string, Promise<void>>());
+  const layoutSaveCoordinator = useDashboardLayoutSaveCoordinator(dashboardId);
 
   useEffect(() => {
     draftRuntimeRef.current = draftRuntime;
   }, [draftRuntime]);
-
-  const enqueueLayoutSave = (
-    key: string,
-    save: () => Promise<QueuedLayoutSaveResult>,
-  ) => {
-    const previousSave = layoutSaveQueueRef.current.get(key) ?? Promise.resolve();
-    const queuedSave = previousSave.catch(() => undefined).then(save);
-    layoutSaveQueueRef.current.set(key, queuedSave.then(() => undefined, () => undefined));
-    return queuedSave;
-  };
 
   const updateDraftWidgetLayouts = async (layout: LayoutItem[]): Promise<DraftLayoutUpdateResult> => {
     if (!selectedPageId) return { status: "rejected" };
@@ -93,7 +84,7 @@ export function useDraftWidgetLayouts({
       return nextRuntime;
     });
     const input = createDraftLayoutSaveInput(selectedPageId, layout);
-    const { previousSavedLayout, result } = await enqueueLayoutSave(pageKey, async () => {
+    const { previousSavedLayout, result } = await layoutSaveCoordinator.enqueue<QueuedLayoutSaveResult>(pageKey, async () => {
       const latestSavedLayout = lastSavedLayoutByPageRef.current.get(pageKey) ?? initialSavedLayout;
       const persisted = await persistDraftLayout(
         input,
@@ -110,9 +101,11 @@ export function useDraftWidgetLayouts({
     });
 
     if (result.status === "saved") {
+      layoutSaveCoordinator.markSaved(pageKey);
       return { previousSavedLayout, status: "saved" };
     }
 
+    layoutSaveCoordinator.markFailed(pageKey);
     onAction("dashboard.layout.save_failed", `/api/dashboards/${dashboardId}/draft/layouts`, selectedPageId, "failed");
     if (layoutMutationRevisions.current.isCurrent(mutationLease)) {
       const lastSavedLayout = lastSavedLayoutByPageRef.current.get(pageKey) ?? initialSavedLayout;
@@ -130,5 +123,11 @@ export function useDraftWidgetLayouts({
     return { status: "failed" };
   };
 
-  return { updateDraftWidgetLayouts };
+  return {
+    hasLayoutSaveFailure: layoutSaveCoordinator.hasFailure,
+    isSavingLayout: layoutSaveCoordinator.isPending,
+    resetLayoutSaveFailure: layoutSaveCoordinator.resetFailure,
+    updateDraftWidgetLayouts,
+    waitForPendingLayoutSaves: layoutSaveCoordinator.waitForPending,
+  };
 }

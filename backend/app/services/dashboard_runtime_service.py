@@ -73,6 +73,7 @@ from app.services.dashboard_physical_data import (
     prune_dashboard_aggregate_state,
 )
 from app.services.dashboard_prepared_result import prepared_live_widget_response
+from app.services.dashboard_publish_validation import apply_validated_draft_layouts, validate_draft_for_publish
 from app.services.dashboard_realtime_bridge import (
     append_dashboard_published_event,
     dashboard_datetime_to_iso,
@@ -366,17 +367,14 @@ class DashboardRuntimeService:
         self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, request.page_id)
-        for layout in request.layouts:
-            widget = self._get_draft_widget_or_raise(dashboard_id, layout.widget_id)
-            if widget.page_id != page.id:
-                self._raise_widget_not_found(layout.widget_id)
-            self.repository.update_widget_layout(widget, self._layout_to_json(layout))
+        apply_validated_draft_layouts(self.repository, page, request)
         self.repository.db.commit()
         return OkResponse(ok=True)
 
     def publish_dashboard(self, dashboard_id: str, actor: ActorContext | None = None) -> PublishDashboardResponse:
         self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         draft_revision = self._get_draft_revision_or_raise(dashboard_id)
+        validate_draft_for_publish(self.repository, self.catalog_repository, draft_revision)
         published_revision = self.repository.copy_revision(draft_revision, DashboardRuntimeMode.PUBLISHED)
         published_revision_id = published_revision.id
         published_at = published_revision.published_at or datetime.now(UTC)
@@ -556,7 +554,7 @@ class DashboardRuntimeService:
         return dashboard
 
     def _ensure_draft_revision(self, dashboard_id: str) -> DashboardRevisionModel:
-        revision = self.repository.get_draft_revision(dashboard_id)
+        revision = self.repository.get_draft_revision(dashboard_id, for_update=True)
         if revision is None:
             published_revision = self.repository.get_published_revision(dashboard_id)
             revision = (
@@ -571,7 +569,7 @@ class DashboardRuntimeService:
 
     def _get_draft_revision_or_raise(self, dashboard_id: str) -> DashboardRevisionModel:
         self._require_dashboard(dashboard_id)
-        revision = self.repository.get_draft_revision(dashboard_id)
+        revision = self.repository.get_draft_revision(dashboard_id, for_update=True)
         if revision is None:
             raise ApiError(
                 ErrorCode.NO_DRAFT_REVISION,

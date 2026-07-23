@@ -59,6 +59,20 @@ export function DashboardEditToolbar({
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
+  const previewToggle = (
+    value: "lg" | "sm" | "xs",
+    label: string,
+    icon: ReactNode,
+  ) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <ToggleGroupItem aria-label={label} data-icon="" size="icon" value={value}>
+          {icon}
+        </ToggleGroupItem>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -112,11 +126,18 @@ export function DashboardEditToolbar({
           {actionButton("다시 실행", <Redo2 />, onRedo, { disabled: !canRedo })}
         </ButtonGroup>
         <span className="asklake-toolbar-divider" aria-hidden="true" />
-        <ButtonGroup aria-label="반응형 미리보기">
-          {actionButton("데스크톱 편집", <Monitor />, () => onLayoutPreviewChange("lg"), { disabled: layoutPreview === "lg" })}
-          {actionButton("태블릿 미리보기", <Tablet />, () => onLayoutPreviewChange("sm"), { disabled: layoutPreview === "sm" })}
-          {actionButton("모바일 미리보기", <Smartphone />, () => onLayoutPreviewChange("xs"), { disabled: layoutPreview === "xs" })}
-        </ButtonGroup>
+        <ToggleGroup
+          aria-label="반응형 미리보기"
+          type="single"
+          value={layoutPreview}
+          onValueChange={(value) => {
+            if (value === "lg" || value === "sm" || value === "xs") onLayoutPreviewChange(value);
+          }}
+        >
+          {previewToggle("lg", "데스크톱 편집", <Monitor />)}
+          {previewToggle("sm", "태블릿 미리보기", <Tablet />)}
+          {previewToggle("xs", "모바일 미리보기", <Smartphone />)}
+        </ToggleGroup>
       </div>
     </TooltipProvider>
   );
