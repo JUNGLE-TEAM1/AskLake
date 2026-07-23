@@ -11,6 +11,7 @@ import {
   runDashboardWidgetDataQueue,
   setDashboardWidgetDataStatus,
 } from "../src/pages/dashboard/runtime/dashboardWidgetDataState.ts";
+import { widgetDataHealthMessage } from "../src/pages/dashboard/runtime/widgetDataHealth.ts";
 import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../src/types/dashboard.ts";
 
 function widget(
@@ -174,4 +175,29 @@ test("many Dataset groups never exceed the bounded request concurrency", async (
 
   assert.equal(maxActive, 4);
   assert.deepEqual(completed.sort(), requests.map((request) => request.key).sort());
+});
+
+test("chart widgets report stale field configuration instead of rendering fallback labels", () => {
+  const current = {
+    ...widget("widget-1", "page-1", "orders", "ready"),
+    config: { aggregation: "sum", xKey: "region", yKey: "revenue" },
+    data: [{ region: "서울", revenue: "확인 필요" }],
+    type: "bar_chart",
+  } as DashboardRuntimeWidget;
+
+  assert.equal(
+    widgetDataHealthMessage(current),
+    "설정한 값 컬럼 'revenue'에 표시할 숫자 데이터가 없습니다.",
+  );
+});
+
+test("count aggregation does not require a numeric value column", () => {
+  const current = {
+    ...widget("widget-1", "page-1", "orders", "ready"),
+    config: { aggregation: "count", xKey: "region" },
+    data: [{ region: "서울" }],
+    type: "bar_chart",
+  } as DashboardRuntimeWidget;
+
+  assert.equal(widgetDataHealthMessage(current), null);
 });

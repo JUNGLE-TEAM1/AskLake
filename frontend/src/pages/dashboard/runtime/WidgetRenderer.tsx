@@ -43,6 +43,7 @@ import {
   formatChartAxisNumber,
   formatChartCategoryAxisLabel,
 } from "./barChartAxes";
+import { widgetDataHealthMessage } from "./widgetDataHealth";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -755,8 +756,8 @@ function RuntimeApexChart({
   );
 }
 
-function EmptyWidgetData() {
-  return <div className="asklake-widget-empty">표시할 데이터가 없습니다.</div>;
+function EmptyWidgetData({ message = "표시할 데이터가 없습니다." }: { message?: string }) {
+  return <div className="asklake-widget-empty">{message}</div>;
 }
 
 function WidgetDataError() {
@@ -1569,6 +1570,9 @@ export const WidgetRenderer = memo(function WidgetRenderer({
 
   const hasError = Boolean(widget.config.error || widget.config.errorMessage);
   if (hasError) return <WidgetDataError />;
+
+  const healthMessage = widgetDataHealthMessage(widget);
+  if (healthMessage) return <EmptyWidgetData message={healthMessage} />;
 
   if (widget.type === "metric") return <MetricWidget widget={widget} />;
   if (widget.type === "table") return <TableWidget widget={widget} />;
