@@ -206,6 +206,12 @@ const dockerfile = readFileSync(path.join(backendDir, "Dockerfile"), "utf8");
 assert.doesNotMatch(dockerfile, /\bdocker-cli\b/, "Production backend image must not install Docker CLI.");
 assert.match(dockerfile, /^FROM apache\/spark:4\.0\.1 AS spark-runtime$/m);
 assert.match(dockerfile, /^FROM python:3\.13-slim AS backend-runtime$/m);
+assert.match(dockerfile, /^FROM maven:3\.9\.11-eclipse-temurin-17 AS spark-runtime-dependencies$/m);
+assert.match(dockerfile, /COPY --from=spark-runtime-dependencies --chown=185:185 \/build\/jars\/ \/opt\/spark\/jars\//);
+const bakedDependencies = readFileSync(path.join(backendDir, "spark-runtime-dependencies", "pom.xml"), "utf8");
+for (const dependency of ["spark-sql-kafka-0-10_2.13", "hadoop-aws", "iceberg-spark-runtime-4.0_2.13", "postgresql"]) {
+  assert.match(bakedDependencies, new RegExp(`<artifactId>${dependency.replaceAll(".", "\\.")}</artifactId>`));
+}
 assert.match(dockerfile, /install -d -o 185 -g 185 -m 0750[\s\S]*\/work\/reports/);
 
 const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || (process.platform === "win32" ? "python" : "python3");
