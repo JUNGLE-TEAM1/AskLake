@@ -5,6 +5,7 @@ from fastapi import status
 from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.identity import PrincipalControlModel, ResourceLockModel
@@ -14,10 +15,18 @@ ALLOWED_PRINCIPAL_CONTROL_TYPES = {"user", "group"}
 ALLOWED_PRINCIPAL_STATUSES = {"active", "blocked"}
 ALLOWED_RESOURCE_LOCK_TYPES = {"dataset", "etl_job", "dashboard"}
 LOCKED_ACTIONS = {"query", "run", "manage", "delete", "share"}
+_schema_ready_bind_ids: set[int] = set()
 
 
 def ensure_governance_tables(db: Session) -> None:
-    Base.metadata.create_all(bind=db.get_bind(), tables=[PrincipalControlModel.__table__, ResourceLockModel.__table__])
+    bind = db.get_bind()
+    bind_key = id(bind)
+    if bind_key in _schema_ready_bind_ids:
+        return
+    if not metadata_schema_mutation_allowed(db, "Governance"):
+        return
+    Base.metadata.create_all(bind=bind, tables=[PrincipalControlModel.__table__, ResourceLockModel.__table__])
+    _schema_ready_bind_ids.add(bind_key)
 
 
 def list_principal_controls(db: Session) -> list[PrincipalControlModel]:

@@ -866,6 +866,17 @@ Production EKS의 FastAPI와 Trino result collector는
 `STARTUP_SCHEMA_MANAGEMENT_ENABLED=false`로 실행한다. Helm pre-install/pre-upgrade
 migration Job이 Alembic과 metadata bootstrap을 먼저 완료하며, 실제 column type이 다른
 경우에만 제한된 `lock_timeout` 안에서 DDL을 수행한다. API request와 worker hot path는
-schema DDL을 실행하지 않는다. PostgreSQL 연결에는 bounded
+schema DDL을 실행하지 않는다. Auth, Audit, Permission, Governance, Catalog, SQL,
+Dashboard, Realtime, Continuous SQL, Semantic compatibility schema helper도 공통 guard를
+통과해야 하며, PostgreSQL DDL은 명시적인 metadata bootstrap 문맥 밖에서 거절된다.
+로컬 SQLite fixture의 자동 준비만 개발 편의를 위해 유지한다. PostgreSQL 연결에는 bounded
 `idle_in_transaction_session_timeout`을 적용하고 request session 종료 시 열린 transaction을
 명시적으로 rollback한 뒤 연결을 pool에 반환한다.
+
+Airflow의 Spark 실행은 세 개의 짧고 분리된 단계로 처리한다. 첫 transaction은 Run row를
+잠그고 `sparkExecution.attemptId` lease를 저장한다. 두 번째 단계는 Job과 source window 등
+Spark 입력에 필요한 DB 값을 일반 `dict`로 복사한 뒤 commit하여 connection과 lock을
+반환한다. 그 다음 외부 SparkApplication 완료를 기다리는 함수에는 `Session`이나 ORM
+객체를 전달하지 않는다. Spark가 끝나면 새 transaction에서 같은 `attemptId`인지 다시
+검사한 뒤 결과를 저장한다. 따라서 장시간 Spark 대기 중에는 DB pool connection을
+점유하지 않으며, 다른 시도가 lease를 교체했다면 오래된 결과는 저장되지 않는다.

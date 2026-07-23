@@ -44,9 +44,12 @@ Dashboard table widget은 chart renderer 전환 범위에 포함하지 않으며
 
 ### Dashboard DB schema 준비
 
-Dashboard의 테이블 구조는 사용자가 Dashboard를 열거나 저장하는 요청에서 만들지 않는다. backend 시작 전에 Dashboard 전용 versioned migration이 필요한 구조를 준비하고, 적용한 버전은 `dashboard_schema_migrations` 테이블에 기록한다.
+Dashboard의 테이블 구조는 사용자가 Dashboard를 열거나 저장하는 요청에서 만들지 않는다.
+배포 migration 단계에서 Dashboard 전용 versioned migration이 필요한 구조를 준비하고,
+적용한 버전은 `dashboard_schema_migrations` 테이블에 기록한다.
 
-일반적인 backend 시작에서는 자동으로 한 번 확인된다. 배포 전 미리 확인하거나 기존 DB를 먼저 올릴 때는 아래 명령을 사용한다.
+로컬 SQLite 개발 환경은 편의를 위해 startup 준비를 유지한다. PostgreSQL 배포에서는
+아래 명령 또는 Helm migration Job이 application 시작 전에 실행되어야 한다.
 
 ```bash
 cd backend
@@ -55,7 +58,13 @@ npm run migrate:metadata-schema
 npm run verify:dashboard-storage
 ```
 
-`migrate:dashboard-schema`는 Dashboard 전용 versioned migration만 실행한다. `migrate:metadata-schema`는 backend traffic 전 Dashboard, ETL, Catalog, SQL metadata와 Continuous/Realtime supporting table을 함께 준비하는 배포 bootstrap이다. backend startup도 같은 bootstrap을 수행하므로 request 또는 control-plane hot path가 최초 DDL을 소유하지 않는다. 현재는 저장소 전체 DB를 관리하는 Alembic 도입 전의 명시적 bootstrap이며, `20260718_dashboard_batch_cache_v1`은 `dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
+`migrate:dashboard-schema`는 Dashboard 전용 versioned migration만 실행한다.
+`migrate:metadata-schema`는 backend traffic 전 Auth, Audit, Permission, Governance,
+Dashboard, ETL, Catalog, SQL, Continuous/Realtime, Semantic supporting table을 함께
+준비하는 단일 compatibility bootstrap이다. EKS Helm Job은 기존 Alembic revision을 먼저
+적용하고 이 bootstrap을 이어서 실행한다. API/worker startup과 request hot path는 이
+DDL을 소유하지 않는다. `20260718_dashboard_batch_cache_v1`은
+`dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
 
 Catalog Dataset 전체 삭제를 변경할 때는 `catalog_dataset_deletions` receipt/fence가 metadata bootstrap에서 준비되는지, impact blocker가 삭제 요청 시 다시 계산되는지, 물리 purge 실패 때 Catalog row가 남는지 확인한다. 로컬 최소 검증은 `cd backend && PYTHONPATH=. .venv/bin/python -m unittest tests.test_catalog_dataset_deletion -v`와 `cd frontend && npm run verify:ui-regressions && npm run build`다. 목록 row 삭제 action은 상세 route를 열지 않아야 하며 `succeeded` 전에는 frontend 목록에서 optimistic removal을 하지 않는다.
 
@@ -1941,7 +1950,13 @@ npm run build
 cd ../backend
 .venv/bin/python -m unittest \
   tests.test_metadata_schema_bootstrap \
-  tests.test_database_session_lifecycle
+  tests.test_database_session_lifecycle \
+  tests.test_runtime_schema_ddl_guard
+
+.venv/bin/python -m pytest -q \
+  tests/test_airflow_execution_commands.py \
+  tests/test_etl_job_delete.py::EtlJobDeleteRunConcurrencyTests::test_duplicate_airflow_spark_request_is_blocked_by_run_lease \
+  tests/test_etl_job_delete.py::EtlJobDeleteRunConcurrencyTests::test_parallel_spark_waits_leave_pool_available_for_status_polling
 
 cd ..
 bash scripts/verify-eks-web-workloads.sh
@@ -1954,3 +1969,10 @@ lock timeout은 기존 workload를 유지한 채 upgrade를 실패시켜야 하�
 API Pod에서 schema DDL을 다시 켜지 않는다. 배포 후 로그인 성공/실패 응답, FastAPI
 rollout/ALB health와 함께 `pg_stat_activity`의 idle-in-transaction 및 relation-lock wait가
 0인지 확인한다.
+
+병렬 Spark 회귀는 서로 다른 Run 8개가 외부 Spark 대기 상태에 동시에 진입한 동안
+SQLAlchemy pool의 checked-out connection이 `0`인지 확인하고, 같은 시간에 40개의 Run
+상태 조회를 병렬 실행한다. 이 검증은 실제 EKS/RDS 부하 시험을 대체하지 않지만, 과거
+장애의 직접 조건이었던 “외부 Spark 대기 수만큼 DB connection을 계속 점유”하는 구조가
+다시 들어오면 실패한다. 배포 전에는 이 회귀를 통과해야 하고, 배포 후에는 RDS
+`DatabaseConnections`, lock wait, API latency로 실제 환경 결과를 별도로 확인한다.

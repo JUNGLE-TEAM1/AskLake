@@ -6,6 +6,7 @@ from typing import Callable
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.models.dashboard_runtime import (
     DashboardBatchWidgetResult,
     DashboardPage,
@@ -332,6 +333,8 @@ def applied_dashboard_schema_versions(db: Session) -> set[str]:
 
 def migrate_dashboard_schema(db: Session) -> list[str]:
     """Prepare Dashboard card/runtime tables before any user request is served."""
+    if not metadata_schema_mutation_allowed(db, "Dashboard"):
+        return []
     try:
         if db.get_bind().dialect.name == "postgresql":
             db.execute(

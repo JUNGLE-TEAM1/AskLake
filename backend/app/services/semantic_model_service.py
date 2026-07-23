@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
 from app.core.errors import ApiError
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.models.semantic_rag import (
     SemanticDimensionModel,
     SemanticMetricModel,
@@ -36,12 +37,20 @@ SEMANTIC_TABLES = [
     SemanticMetricModel.__table__, SemanticDimensionModel.__table__, SemanticRelationshipModel.__table__,
     SemanticVocabularyModel.__table__,
 ]
+_schema_ready_bind_ids: set[int] = set()
 
 
 def ensure_semantic_schema(db: Session) -> None:
     """Compatibility bootstrap; Alembic remains the deployment source of truth."""
     from app.models.base import Base
-    Base.metadata.create_all(bind=db.get_bind(), tables=SEMANTIC_TABLES)
+    bind = db.get_bind()
+    bind_key = id(bind)
+    if bind_key in _schema_ready_bind_ids:
+        return
+    if not metadata_schema_mutation_allowed(db, "Semantic model"):
+        return
+    Base.metadata.create_all(bind=bind, tables=SEMANTIC_TABLES)
+    _schema_ready_bind_ids.add(bind_key)
 
 
 class SemanticModelService:

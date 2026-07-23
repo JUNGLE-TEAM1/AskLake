@@ -32,7 +32,8 @@ class AirflowSparkExecutionHooks:
     format_rows: Callable[[Any], str]
     iso_now: Callable[[], str]
     make_attempt_id: Callable[[str], str]
-    run_spark_job: Callable[[Session, ETLJobModel, str, str], dict[str, Any]]
+    prepare_spark_job: Callable[[Session, ETLJobModel, str, str], Any]
+    run_prepared_spark_job: Callable[[Any], dict[str, Any]]
     spark_error_summary: Callable[[dict[str, Any]], str]
     spark_execution_lease_is_active: Callable[[Any], bool]
     spark_failed_stage: Callable[[dict[str, Any]], str]
@@ -100,13 +101,22 @@ def execute_airflow_spark_run(
         },
     }
     db.commit()
-    job = etl_repository.get_job(db, job_id)
-    if job is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Spark claim: {job_id}", status.HTTP_404_NOT_FOUND)
 
     try:
-        result = hooks.run_spark_job(db, job, command, run_id)
+        job = etl_repository.get_job(db, job_id)
+        if job is None:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                f"Job not found after Spark claim: {job_id}",
+                status.HTTP_404_NOT_FOUND,
+            )
+        prepared_job = hooks.prepare_spark_job(db, job, command, run_id)
+        # Preparing a Spark submission may read or update metadata. End that
+        # transaction before the external Spark process starts so its minutes-
+        # long wait never owns a database connection or row lock.
+        db.commit()
     except Exception as exc:
+        db.rollback()
         finalize_spark_execution_attempt(
             db,
             job_id=job_id,
@@ -117,16 +127,39 @@ def execute_airflow_spark_run(
         )
         raise
 
-    manifest = hooks.spark_result_manifest(result, run_id)
+    try:
+        # The external runner deliberately receives no Session or ORM model.
+        # Everything it needs was copied into ``prepared_job`` above.
+        result = hooks.run_prepared_spark_job(prepared_job)
+        manifest = hooks.spark_result_manifest(result, run_id)
+    except Exception as exc:
+        db.rollback()
+        finalize_spark_execution_attempt(
+            db,
+            job_id=job_id,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            error=hooks.compact_storage_text(exc, limit=1000),
+            hooks=hooks,
+        )
+        raise
+
     job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
+        db.rollback()
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Spark execution: {job_id}", status.HTTP_404_NOT_FOUND)
     run = etl_repository.get_run_model(db, run_id)
     if run is None or run.job_id != job.id:
-        raise ApiError(ErrorCode.INVALID_JOB_STATE, "Spark Run disappeared during finalization", status.HTTP_409_CONFLICT)
+        db.rollback()
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Spark Run disappeared during finalization",
+            status.HTTP_409_CONFLICT,
+        )
     etl_repository.refresh_run_for_update(db, run)
     execution = (run.task_states or {}).get("sparkExecution")
     if not isinstance(execution, dict) or execution.get("attemptId") != attempt_id:
+        db.rollback()
         raise ApiError(
             ErrorCode.INVALID_JOB_STATE,
             "Spark execution lease changed before finalization",

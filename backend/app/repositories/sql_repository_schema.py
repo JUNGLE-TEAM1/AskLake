@@ -1,6 +1,7 @@
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.models.sql import SqlRunModel, SqlRunResultPageModel
 
 
@@ -11,6 +12,8 @@ def ensure_sql_schema(db: Session) -> None:
     bind = db.get_bind()
     bind_key = id(bind)
     if bind_key in _schema_ready_bind_ids:
+        return
+    if not metadata_schema_mutation_allowed(db, "SQL"):
         return
 
     with bind.begin() as connection:

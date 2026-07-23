@@ -399,7 +399,7 @@ from app.services.etl import (
 )
 from app.services.etl.runtime_binding import bind_runtime
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
-from app.services.auth_service import load_active_actor_by_user_id
+from app.services.auth_service import ensure_auth_tables, load_active_actor_by_user_id
 from app.services.governance_enforcement import require_governed_access
 from app.services.trino_materialization_service import materialized_dataset_id
 from app.services.trino_query_run_service import TrinoQueryRunService
@@ -2066,6 +2066,8 @@ kafka_snapshot_source_boundary = bind_runtime(_etl_snapshot_operations.IMPLEMENT
 kafka_materialization_for_snapshot = bind_runtime(_etl_snapshot_operations.IMPLEMENTATIONS['kafka_materialization_for_snapshot'], globals(), runtime_names=_etl_snapshot_operations.RUNTIME_NAMES)
 kafka_offset_policy = bind_runtime(_etl_snapshot_operations.IMPLEMENTATIONS['kafka_offset_policy'], globals(), runtime_names=_etl_snapshot_operations.RUNTIME_NAMES)
 parse_kafka_target_path = bind_runtime(_etl_snapshot_operations.IMPLEMENTATIONS['parse_kafka_target_path'], globals(), runtime_names=_etl_snapshot_operations.RUNTIME_NAMES)
+prepare_spark_job = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['prepare_spark_job'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
+run_prepared_spark_job = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['run_prepared_spark_job'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 run_spark_job = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['run_spark_job'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 ensure_batch_iceberg_target = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['ensure_batch_iceberg_target'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 sync_active_airflow_snapshot_runs = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['sync_active_airflow_snapshot_runs'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)

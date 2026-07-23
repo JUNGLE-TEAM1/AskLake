@@ -3,6 +3,7 @@ from typing import Any
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models.catalog import CatalogDatasetModel
 
@@ -107,6 +108,8 @@ def ensure_catalog_schema(db: Session) -> None:
     bind = db.get_bind()
     bind_key = id(bind)
     if bind_key in _schema_ready_bind_ids:
+        return
+    if not metadata_schema_mutation_allowed(db, "Catalog"):
         return
 
     with bind.begin() as connection:

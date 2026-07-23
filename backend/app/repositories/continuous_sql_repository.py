@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.models.base import Base
 from app.models.continuous_sql import (
     ContinuousSqlBatchModel,
@@ -55,6 +56,8 @@ _schema_ready_binds: WeakSet = WeakSet()
 def ensure_continuous_sql_schema(db: Session) -> None:
     bind = db.get_bind()
     if bind in _schema_ready_binds:
+        return
+    if not metadata_schema_mutation_allowed(db, "Continuous SQL"):
         return
     Base.metadata.create_all(bind=bind, tables=CONTINUOUS_SQL_TABLES)
     _schema_ready_binds.add(bind)

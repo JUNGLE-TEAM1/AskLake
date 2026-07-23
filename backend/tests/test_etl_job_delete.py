@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from queue import Queue
 from tempfile import TemporaryDirectory
@@ -735,7 +736,20 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
         spark_calls = Mock()
         first_result: Queue = Queue()
 
-        def blocking_spark(_db, _job, command, requested_run_id):
+        prepared_job = {
+            "command": "run",
+            "runId": run_id,
+        }
+
+        def prepare_spark(_db, _job, command, requested_run_id):
+            self.assertEqual(command, "run")
+            self.assertEqual(requested_run_id, run_id)
+            return prepared_job
+
+        def blocking_spark(prepared):
+            self.assertIs(prepared, prepared_job)
+            command = str(prepared["command"])
+            requested_run_id = str(prepared["runId"])
             spark_calls(command, requested_run_id)
             spark_entered.set()
             if not release_spark.wait(timeout=10):
@@ -764,11 +778,17 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
 
         with (
             patch("app.repositories.etl_repository.ensure_schema", return_value=None),
-            patch("app.services.etl_service.run_spark_job", side_effect=blocking_spark),
+            patch("app.services.etl_service.prepare_spark_job", side_effect=prepare_spark),
+            patch("app.services.etl_service.run_prepared_spark_job", side_effect=blocking_spark),
         ):
             first_thread = threading.Thread(target=first_request, name="spark-lease-owner")
             first_thread.start()
             self.assertTrue(spark_entered.wait(timeout=5))
+            self.assertEqual(
+                self.engine.pool.checkedout(),
+                0,
+                "The Spark wait must not keep a pooled database connection checked out.",
+            )
             with self.session_factory() as db:
                 with self.assertRaises(ApiError) as duplicate:
                     execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
@@ -785,6 +805,100 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             run = db.get(ETLRunModel, run_id)
             self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
             self.assertEqual(run.task_states["sparkResult"]["status"], "success")
+
+    def test_parallel_spark_waits_leave_pool_available_for_status_polling(self) -> None:
+        run_count = 8
+        job_ids = [f"JOB-SPARK-POOL-{index}" for index in range(run_count)]
+        run_ids = [f"RUN-SPARK-POOL-{index}" for index in range(run_count)]
+        for job_id, run_id in zip(job_ids, run_ids, strict=True):
+            self.insert_job(job_id)
+            self.insert_airflow_run(job_id, run_id)
+
+        entered_condition = threading.Condition()
+        entered_run_ids: set[str] = set()
+        release_spark = threading.Event()
+        results: Queue = Queue()
+
+        def prepare_spark(_db, _job, command, requested_run_id):
+            return {"command": command, "runId": requested_run_id}
+
+        def blocking_spark(prepared):
+            requested_run_id = str(prepared["runId"])
+            with entered_condition:
+                entered_run_ids.add(requested_run_id)
+                entered_condition.notify_all()
+            if not release_spark.wait(timeout=10):
+                raise TimeoutError("test did not release parallel Spark waits")
+            return {
+                "endedAt": "2026-07-12T11:00:02Z",
+                "inputRows": 2,
+                "outputPath": f"s3a://asklake-output/test/{requested_run_id}",
+                "outputRows": 2,
+                "runId": requested_run_id,
+                "status": "success",
+            }
+
+        def execute(job_id: str, run_id: str) -> None:
+            try:
+                with self.session_factory() as db:
+                    results.put(execute_airflow_spark_run(
+                        db,
+                        job_id=job_id,
+                        run_id=run_id,
+                        command="run",
+                    ))
+            except BaseException as exc:
+                results.put(exc)
+
+        def poll_status(run_id: str) -> str:
+            with self.session_factory() as db:
+                run = db.get(ETLRunModel, run_id)
+                return str(run.task_states["sparkExecution"]["status"])
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.prepare_spark_job", side_effect=prepare_spark),
+            patch("app.services.etl_service.run_prepared_spark_job", side_effect=blocking_spark),
+        ):
+            execution_threads = [
+                threading.Thread(
+                    target=execute,
+                    args=(job_id, run_id),
+                    name=f"spark-pool-{index}",
+                )
+                for index, (job_id, run_id) in enumerate(zip(job_ids, run_ids, strict=True))
+            ]
+            for thread in execution_threads:
+                thread.start()
+
+            with entered_condition:
+                all_waiting = entered_condition.wait_for(
+                    lambda: len(entered_run_ids) == run_count,
+                    timeout=5,
+                )
+            self.assertTrue(all_waiting, entered_run_ids)
+            self.assertEqual(
+                self.engine.pool.checkedout(),
+                0,
+                "Parallel external Spark waits must return every pooled DB connection.",
+            )
+
+            poll_started_at = time.monotonic()
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                statuses = list(executor.map(poll_status, run_ids * 5))
+            poll_elapsed_seconds = time.monotonic() - poll_started_at
+            self.assertEqual(statuses, ["running"] * (run_count * 5))
+            self.assertLess(poll_elapsed_seconds, 5)
+
+            release_spark.set()
+            for thread in execution_threads:
+                thread.join(timeout=10)
+
+        self.assertTrue(all(not thread.is_alive() for thread in execution_threads))
+        completed = [results.get_nowait() for _ in range(run_count)]
+        failures = [item for item in completed if isinstance(item, BaseException)]
+        self.assertEqual(failures, [])
+        self.assertTrue(all(item["status"] == "success" for item in completed))
 
     def test_delete_observes_kafka_reservation_while_external_ingest_runs(self) -> None:
         job_id = "JOB-SQLITE-KAFKA-RUN-WINS"
