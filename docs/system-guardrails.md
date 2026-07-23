@@ -257,4 +257,7 @@ owner와 같은 generation으로 Ready 1/1이어야 하며 구형 external EC2 o
 - request DB session은 종료 시 열린 transaction을 rollback하고 PostgreSQL
   `idle_in_transaction_session_timeout`을 적용한다.
 - rollout 합격 조건에는 로그인 endpoint가 pool timeout 없이 정상 응답하는지,
-  `pg_stat_activity`의 idle-in-transaction 및 relation-lock wait가 0인지가 포함된다.
+  1초 Job 상태 조회의 API 5xx와 QueuePool timeout이 0인지, 새 Pod가 startup probe
+  한도 150초 안에 Ready인지, `pg_stat_activity`의 장기 idle-in-transaction 및
+  relation-lock wait가 0인지가 포함된다. Spark 대기 Run 수만큼 RDS
+  `DatabaseConnections`가 지속 증가하면 rollout을 완료로 판정하지 않는다.

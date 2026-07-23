@@ -240,6 +240,41 @@ class AirflowSparkExecutionCommandTests(unittest.TestCase):
         self.assertEqual(run.task_states["sparkExecution"]["error"], "spark unavailable")
         self.assertNotIn("sparkResult", run.task_states)
 
+    def test_runner_timeout_releases_preparation_transaction_and_marks_attempt_failed(self) -> None:
+        db = FakeSession()
+        job = SimpleNamespace(id="JOB-1", target_path=None)
+        run = SimpleNamespace(
+            airflow_dag_run_id="RUN-1",
+            job_id="JOB-1",
+            task_states={},
+        )
+
+        def timeout_after_release(_prepared: object) -> dict[str, object]:
+            self.assertEqual(db.commits, 2)
+            raise TimeoutError("spark wait timed out")
+
+        runner = Mock(side_effect=timeout_after_release)
+        with (
+            patch("app.application.airflow_execution.etl_repository.get_job_for_update", side_effect=[job, job]),
+            patch("app.application.airflow_execution.etl_repository.get_job", return_value=job),
+            patch("app.application.airflow_execution.etl_repository.get_run_model", side_effect=[run, run]),
+            patch("app.application.airflow_execution.etl_repository.refresh_run_for_update"),
+            self.assertRaisesRegex(TimeoutError, "spark wait timed out"),
+        ):
+            execute_airflow_spark_run(
+                db,
+                job_id="JOB-1",
+                run_id="RUN-1",
+                command="run",
+                hooks=spark_hooks(runner),
+            )
+
+        self.assertEqual(db.commits, 3)
+        self.assertEqual(db.rollbacks, 1)
+        self.assertEqual(run.task_states["sparkExecution"]["status"], "failed")
+        self.assertEqual(run.task_states["sparkExecution"]["error"], "spark wait timed out")
+        self.assertNotIn("sparkResult", run.task_states)
+
     def test_invalid_spark_result_marks_only_the_owned_attempt_failed(self) -> None:
         db = FakeSession()
         job = SimpleNamespace(id="JOB-1", target_path=None)

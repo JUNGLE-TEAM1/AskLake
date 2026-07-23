@@ -1976,3 +1976,13 @@ SQLAlchemy pool의 checked-out connection이 `0`인지 확인하고, 같은 시�
 장애의 직접 조건이었던 “외부 Spark 대기 수만큼 DB connection을 계속 점유”하는 구조가
 다시 들어오면 실패한다. 배포 전에는 이 회귀를 통과해야 하고, 배포 후에는 RDS
 `DatabaseConnections`, lock wait, API latency로 실제 환경 결과를 별도로 확인한다.
+
+배포 후 수동 합격 기준은 다음과 같다.
+
+- 수분간 실행되는 Spark Run 수를 늘려도 `pg_stat_activity`에 해당 execute 요청의
+  장기 `idle in transaction` 세션이 없어야 한다.
+- Spark 대기 Run 수만큼 RDS `DatabaseConnections`가 지속 증가하지 않아야 하고,
+  application log에 `QueuePool limit ... timed out`이 0건이어야 한다.
+- 1초 간격 Job 상태 조회를 겹쳐도 API 5xx가 0건이어야 한다.
+- HPA가 만든 FastAPI Pod는 startup probe 한도인 150초 안에 Ready가 되어야 하며,
+  metadata DDL relation-lock wait가 없어야 한다.
