@@ -6,6 +6,7 @@ import type {
   DashboardRuntimePage,
   DashboardRuntimeResponse,
   DashboardRuntimeWidget,
+  DashboardWidgetLayout,
 } from "../../../types";
 import type { DashboardAutoRefreshStatus } from "./dashboardAutoRefresh";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
@@ -17,6 +18,7 @@ import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
+import { WidgetLayoutPanel } from "./WidgetLayoutPanel";
 import type { DashboardAssistantPromptInsertion } from "./DashboardAssistantPanel";
 import type {
   CreateDraftWidgetFormInput,
@@ -91,7 +93,7 @@ type DashboardRuntimeViewActions = {
   createToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   deletePage: (pageId: string) => void;
   deleteWidget: (widgetId: string) => void;
-  layoutCommit: (layout: LayoutItem[]) => void;
+  layoutCommit: (layout: LayoutItem[]) => void | Promise<void>;
   layoutRejected: () => void;
   openDraft: () => void;
   openPublished: () => void;
@@ -415,8 +417,18 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   };
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
   const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";
-  const isInspectorAvailable = isAssistantInspectorOpen || (isDraftMode && !selectedWidgetHidesInspector);
+  const isInspectorAvailable = isAssistantInspectorOpen || isDraftMode;
   const configurableDraftWidget = selectedWidgetHidesInspector ? null : selectedDraftWidget;
+  const shouldShowWidgetConfig = !selectedDraftWidget || !selectedWidgetHidesInspector;
+
+  const applyWidgetLayout = (widgetId: string, nextWidgetLayout: DashboardWidgetLayout) => {
+    const layout = selectedDraftWidgets.map((widget) => ({
+      ...widget.layout,
+      ...(widget.id === widgetId ? nextWidgetLayout : {}),
+      i: widget.id,
+    }));
+    void onLayoutCommit(layout);
+  };
 
   useEffect(() => {
     if (selectedWidgetHidesInspector) onPreviewWidget(null);
@@ -552,19 +564,24 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
           </aside>
         ) : isInspectorAvailable && isInspectorOpen ? (
           <aside className="asklake-dashboard-inspector" id="asklake-dashboard-inspector">
-            <WidgetConfigPanel
-              datasets={dashboardDatasets}
-              editingWidget={configurableDraftWidget}
-              focusedColorSlot={focusedColorSlot}
-              isCreating={isCreatingDatasetWidget}
-              isUpdating={updatingWidgetId === configurableDraftWidget?.id}
-              onPreviewWidgetChange={onPreviewWidget}
-              selectedDataset={selectedDataset}
-              selectedDatasetId={selectedDatasetId}
-              onCreateWidget={onCreateDatasetWidget}
-              onSelectDataset={onSelectWidgetDataset}
-              onUpdateWidget={onUpdateWidget}
-            />
+            {selectedDraftWidget ? (
+              <WidgetLayoutPanel widget={selectedDraftWidget} onApplyLayout={applyWidgetLayout} />
+            ) : null}
+            {shouldShowWidgetConfig ? (
+              <WidgetConfigPanel
+                datasets={dashboardDatasets}
+                editingWidget={configurableDraftWidget}
+                focusedColorSlot={focusedColorSlot}
+                isCreating={isCreatingDatasetWidget}
+                isUpdating={updatingWidgetId === configurableDraftWidget?.id}
+                onPreviewWidgetChange={onPreviewWidget}
+                selectedDataset={selectedDataset}
+                selectedDatasetId={selectedDatasetId}
+                onCreateWidget={onCreateDatasetWidget}
+                onSelectDataset={onSelectWidgetDataset}
+                onUpdateWidget={onUpdateWidget}
+              />
+            ) : null}
           </aside>
         ) : undefined}
         inspectorOpen={isInspectorAvailable && isInspectorOpen}

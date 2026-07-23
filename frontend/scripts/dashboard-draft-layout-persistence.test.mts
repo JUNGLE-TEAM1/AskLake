@@ -10,6 +10,7 @@ import {
   runtimePageLayoutSnapshot,
 } from "../src/pages/dashboard/runtime/draftWidgetLayoutPersistence.ts";
 import { hasAnyLayoutCollision } from "../src/pages/dashboard/runtime/dashboardLayoutUtils.ts";
+import { layoutFromDraft } from "../src/pages/dashboard/runtime/widgetLayoutEditor.ts";
 import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../src/types/dashboard.ts";
 
 const dashboardCanvasSource = readFileSync(
@@ -131,4 +132,20 @@ test("desktop dashboards preserve intentional gaps and block colliding widget mo
     /compactor=\{preservesManualPlacement \? fixedDesktopCompactor : verticalCompactor\}/,
   );
   assert.match(dashboardCanvasSource, /onBreakpointChange=\{\(breakpoint\) => setActiveBreakpoint\(breakpoint\)\}/);
+});
+
+test("coordinate editor preserves widget limits and rejects positions outside the 12-column canvas", () => {
+  const widget = metricWidget("widget-1", 0, 0);
+  assert.deepEqual(
+    layoutFromDraft(widget, { h: "4", w: "6", x: "6", y: "3" }),
+    { h: 4, minH: 2, minW: 2, w: 6, x: 6, y: 3 },
+  );
+  assert.equal(
+    layoutFromDraft(widget, { h: "4", w: "6", x: "7", y: "3" }),
+    "X 좌표와 너비의 합이 12열을 넘을 수 없습니다.",
+  );
+  assert.equal(
+    layoutFromDraft(widget, { h: "1", w: "6", x: "0", y: "3" }),
+    "이 위젯의 최소 크기는 2열 × 2행입니다.",
+  );
 });
