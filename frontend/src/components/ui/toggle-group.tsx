@@ -17,7 +17,7 @@ export const ToggleGroup = React.forwardRef<
 ToggleGroup.displayName = ToggleGroupPrimitive.Root.displayName;
 
 export const toggleGroupItemVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-semibold tracking-normal transition-colors hover:bg-white hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-white data-[state=on]:text-slate-950 data-[state=on]:shadow-sm [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium tracking-normal transition-colors hover:bg-white hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-white data-[state=on]:font-semibold data-[state=on]:text-slate-950 data-[state=on]:shadow-sm [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     defaultVariants: {
       size: "default",
@@ -42,6 +42,7 @@ export const ToggleGroupItem = React.forwardRef<
 >(({ className, size, ...props }, ref) => (
   <ToggleGroupPrimitive.Item
     className={cn(toggleGroupItemVariants({ className, size }))}
+    data-slot="toggle-group-item"
     ref={ref}
     {...props}
   />

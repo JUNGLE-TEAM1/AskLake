@@ -68,7 +68,7 @@ export const PaginationBar = React.forwardRef<HTMLDivElement, PaginationBarProps
       >
         {rangeLabel ? (
           <div
-            className={cn("min-w-0 text-xs font-bold text-slate-500", summaryClassName)}
+            className={cn("min-w-0 text-xs font-normal text-slate-500", summaryClassName)}
             data-slot="pagination-summary"
           >
             {rangeLabel}
@@ -99,7 +99,7 @@ export const PaginationBar = React.forwardRef<HTMLDivElement, PaginationBarProps
             {resolvedPageLabel ? (
               <PaginationItem>
                 <strong
-                  className="inline-flex min-h-8 items-center whitespace-nowrap px-1 text-xs font-black text-slate-500"
+                  className="inline-flex min-h-8 items-center whitespace-nowrap px-1 text-xs font-medium text-slate-500"
                   data-slot="pagination-page-label"
                 >
                   {resolvedPageLabel}

@@ -5,7 +5,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap text-base font-semibold tracking-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap text-base font-medium tracking-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     defaultVariants: {
       shape: "default",
@@ -26,11 +26,11 @@ export const buttonVariants = cva(
         sm: "h-9 px-3 text-sm",
       },
       variant: {
-        destructive: "bg-red-600 text-white shadow-sm hover:bg-red-700",
+        destructive: "bg-red-600 font-semibold text-white shadow-sm hover:bg-red-700",
         ghost: "text-slate-700 hover:bg-slate-100 hover:text-slate-950",
         link: "h-auto px-0 py-0 text-blue-700 underline-offset-4 hover:underline",
         outline: "border border-slate-200 bg-white text-slate-900 shadow-sm hover:bg-slate-50",
-        primary: "bg-blue-600 text-white shadow-sm hover:bg-blue-700",
+        primary: "bg-blue-600 font-semibold text-white shadow-sm hover:bg-blue-700",
         secondary: "bg-slate-100 text-slate-900 hover:bg-slate-200",
         subtle: "bg-blue-50 text-blue-700 hover:bg-blue-100",
       },
@@ -51,6 +51,8 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <Comp
         className={cn(buttonVariants({ className, shape, size, variant }))}
+        data-slot="button"
+        data-variant={variant ?? "primary"}
         ref={ref}
         {...props}
       />
