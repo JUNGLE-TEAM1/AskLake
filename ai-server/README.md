@@ -89,11 +89,12 @@ calls only the AskLake Catalog tool through `MCP_SERVER_URL`; the backend
 owns authorization and rechecks the signed scope. The gateway does not run
 SQL or expose arbitrary tools.
 
-The service rejects request bodies over 64 KiB by default, bounds prompt,
-context, tool, output, and provider-response sizes, and applies a 30-second
-provider timeout. Override limits with the matching uppercase environment
-variables only when the deployment has an explicit reason. Use a strong,
-secret `INTERNAL_AUTH_TOKEN` in every non-local environment.
+The service rejects request bodies over 64 KiB by default and permits up to
+64 KiB of internal context after MCP resolution. It bounds prompt, tool,
+output, and provider-response sizes, and applies a 30-second provider timeout.
+Override limits with the matching uppercase environment variables only when
+the deployment has an explicit reason. Use a strong, secret
+`INTERNAL_AUTH_TOKEN` in every non-local environment.
 
 Run focused tests from `ai-server/`:
 

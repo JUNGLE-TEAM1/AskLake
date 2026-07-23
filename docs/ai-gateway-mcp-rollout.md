@@ -54,6 +54,7 @@ Browser -> Caddy -> backend /api/query/ai-suggestions
 - EKS Gateway는 public Ingress·LoadBalancer·NodePort를 만들지 않는다. Backend만 8090/TCP로 접근하고 Gateway egress는 cluster DNS, Backend MCP와 provider HTTPS로 제한한다.
 - EKS Backend Secret에는 provider key를 두지 않는다. `asklake-ai-gateway-runtime`의 provider key만 `PROVIDER_API_KEY`로 주입하며 service/MCP token은 논리 shared binding으로 byte-exact하게 관리한다.
 - SQL·Dashboard·ETL·RAG·Review 요청은 `AI_QUERY_PROVIDER=gateway` 한 경로로만 들어가며 provider key는 ai-server에만 둔다. Backend의 과거 direct OpenAI 설정과 frontend mock 전환 환경변수는 제거했다.
+- Gateway의 기본 internal context 한도는 64 KiB다. 이는 Dashboard widget context와 MCP가 다시 해석한 authorized Catalog context를 함께 수용하기 위한 값이며, public request-body 한도(64 KiB)와 provider response 한도는 별도로 유지한다.
 
 ## 연구 기반 성능 기준
 
