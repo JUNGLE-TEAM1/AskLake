@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
   dashboardAutoRefreshStatusCopy,
+  shouldDisplayDashboardAutoRefreshStatus,
   type DashboardAutoRefreshStatus,
 } from "./dashboardAutoRefresh";
 
@@ -51,6 +52,7 @@ export function DashboardTopBar({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const canRename = mode === "draft" && Boolean(onRenameTitle);
   const autoRefreshStatusLabel = dashboardAutoRefreshStatusCopy(autoRefreshStatus);
+  const showAutoRefreshStatus = shouldDisplayDashboardAutoRefreshStatus(autoRefreshStatus);
   const autoRefreshStatusTone = autoRefreshStatus === "active"
     ? "success"
     : autoRefreshStatus === "error"
@@ -105,13 +107,15 @@ export function DashboardTopBar({
         ) : (
           <div className="asklake-dashboard-title-row">
             <h1>{title}</h1>
-            <StatusBadge
-              aria-label={`대시보드 동기화 상태: ${autoRefreshStatusLabel}`}
-              title={autoRefreshError ?? autoRefreshStatusLabel}
-              tone={autoRefreshStatusTone}
-            >
-              {autoRefreshStatusLabel}
-            </StatusBadge>
+            {showAutoRefreshStatus && (
+              <StatusBadge
+                aria-label={`대시보드 동기화 상태: ${autoRefreshStatusLabel}`}
+                title={autoRefreshError ?? autoRefreshStatusLabel}
+                tone={autoRefreshStatusTone}
+              >
+                {autoRefreshStatusLabel}
+              </StatusBadge>
+            )}
             {canRename && (
               <Button
                 className="asklake-dashboard-title-edit-button"

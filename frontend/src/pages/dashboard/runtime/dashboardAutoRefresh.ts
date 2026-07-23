@@ -55,3 +55,7 @@ export function dashboardAutoRefreshStatusCopy(status: DashboardAutoRefreshStatu
       return "수동 새로고침";
   }
 }
+
+export function shouldDisplayDashboardAutoRefreshStatus(status: DashboardAutoRefreshStatus) {
+  return status !== "manual";
+}

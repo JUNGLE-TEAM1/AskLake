@@ -13,6 +13,7 @@ import {
   dashboardAutoRefreshPreferenceKey,
   dashboardAutoRefreshStatusCopy,
   readDashboardAutoRefreshPreference,
+  shouldDisplayDashboardAutoRefreshStatus,
   writeDashboardAutoRefreshPreference,
 } from "../src/pages/dashboard/runtime/dashboardAutoRefresh.ts";
 
@@ -56,6 +57,10 @@ test("Dashboard auto-refresh preference is scoped by user and Dashboard and defa
   );
   assert.equal(dashboardAutoRefreshStatusCopy("active"), "자동 갱신 중");
   assert.equal(dashboardAutoRefreshStatusCopy("manual"), "수동 새로고침");
+  assert.equal(shouldDisplayDashboardAutoRefreshStatus("manual"), false);
+  assert.equal(shouldDisplayDashboardAutoRefreshStatus("connecting"), true);
+  assert.equal(shouldDisplayDashboardAutoRefreshStatus("active"), true);
+  assert.equal(shouldDisplayDashboardAutoRefreshStatus("error"), true);
 });
 
 
