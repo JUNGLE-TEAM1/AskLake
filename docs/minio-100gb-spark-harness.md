@@ -6,6 +6,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 
 - `backend/src/server.mjs`: local JSON API server
 - `backend/src/connectors.mjs`: source connector runner
+- `backend/src/minioDockerClient.mjs`: 로컬 MinIO Docker fallback의 object 목록·stat·bounded Range 실행 adapter
 - `backend/src/s3.service.mjs`: Target 저장경로 picker용 S3 bucket/prefix 조회
 - `backend/src/targetDatabase.service.mjs`: Target DB picker용 허용 DB 목록 조회
 - `backend/src/profile.mjs`: CSV/TSV/JSON/JSONL/TXT parser and schema profiler
