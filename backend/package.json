@@ -79,6 +79,7 @@
     "verify:dashboard-runtime-persistence": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_dashboard_runtime_persistence -v",
     "verify:dashboard-performance": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_dashboard_request_no_ddl.DashboardRequestNoDdlTests.test_dashboard_read_requests_do_not_execute_schema_ddl tests.test_dashboard_physical_widget_data.DashboardPhysicalWidgetDataTests.test_runtime_shell_returns_widget_metadata_without_opening_storage tests.test_dashboard_physical_widget_data.DashboardPhysicalWidgetDataTests.test_batch_widget_result_is_reused_after_permission_is_rechecked -v",
     "measure:dashboard-performance": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/measure-dashboard-performance.py",
+    "verify:prefix-source": "node --test scripts/prefix-source-validation.test.mjs && node scripts/verify-prefix-source-connector.mjs",
     "verify:sources": "node scripts/verify-all-sources.mjs",
     "verify:spark-run": "node scripts/verify-spark-job-run.mjs",
     "verify:spark-runtime-paths": "python3 scripts/verify-spark-runtime-paths.py",

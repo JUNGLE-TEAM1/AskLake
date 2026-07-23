@@ -1396,6 +1396,19 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 - dashboard persistence regression tests
 - dashboard publish/share/refresh runtime smoke tests
 
+### File / S3 Prefix Preview 검증
+
+Prefix Preview는 모든 데이터 파일의 schema 호환성 검사를 유지하되 대표 파일을 먼저 처리하고 나머지 파일을 bounded worker pool로 병렬 처리한다. 파일별 샘플은 64KiB에서 시작해 완전한 레코드가 부족할 때만 비중복 Range로 확장한다. 로컬 튜닝은 `ASKLAKE_PREFIX_VALIDATION_CONCURRENCY`(기본 8, 1~32)와 `ASKLAKE_PREFIX_INITIAL_SAMPLE_BYTES`(기본 65,536)로 하며 기존 scope별 최대 샘플 byte가 최종 상한이다.
+
+코드 변경 뒤에는 외부 MinIO 없이 다음 회귀를 먼저 실행한다.
+
+```bash
+cd backend
+npm run verify:prefix-source
+```
+
+이 명령은 worker 동시성·입력 순서, CSV/JSONL의 완전한 레코드 처리, UTF-8 경계, EOF와 최대 byte, 대표 파일 및 schema 불일치 계약을 검증한다. 실제 저장소와 Spark까지의 경로는 아래 `npm run verify:prefix-spark-e2e`로 별도 확인한다.
+
 ### Synthetic commerce dataset 검증
 
 SQL 및 ETL 분석용 커머스 데이터는 `backend/scripts/synthetic-commerce/`의 결정적 generator로 만든다. Amazon Electronics metadata JSONL은 저장소에 포함하지 않으며 실행자가 로컬 경로로 전달한다. 임시 생성 결과는 ignored `backend/tmp/` 아래에 둔다. `meta`, `users`, `click_events`는 서로 다른 스키마이므로 각각 별도 Prefix/Job으로 취급하며, 한 Prefix 안에는 같은 스키마의 `part-*.jsonl`만 둔다.

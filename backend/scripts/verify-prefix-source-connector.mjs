@@ -25,7 +25,7 @@ const analysis = await buildObjectStoragePrefixAnalysis({
   forcePathStyle: true,
   objects,
   prefix,
-  readSample: async ({ key }) => jsonlSamples.get(key) ?? "",
+  readRange: rangeReader(jsonlSamples),
   region: "ap-northeast-2",
   sourceType: "File / S3",
 });
@@ -60,7 +60,7 @@ await assert.rejects(
     forcePathStyle: true,
     objects: [object(`${prefix}part-00000.jsonl`, 100), object(`${prefix}part-00001.csv`, 100)],
     prefix,
-    readSample: async () => "",
+    readRange: rangeReader(jsonlSamples),
     region: "ap-northeast-2",
   }),
   (error) => error?.code === "SOURCE_PREFIX_MIXED_FORMATS" && error?.status === 400,
@@ -73,7 +73,7 @@ const explicitFormat = await buildObjectStoragePrefixAnalysis({
   forcePathStyle: true,
   objects: [object(`${prefix}part-00000.jsonl`, 120), object(`${prefix}unrelated.csv`, 90)],
   prefix,
-  readSample: async ({ key }) => jsonlSamples.get(key) ?? "",
+  readRange: rangeReader(jsonlSamples),
   region: "ap-northeast-2",
 });
 assert.equal(explicitFormat.datasetSummary.fileCount, 1);
@@ -87,13 +87,66 @@ await assert.rejects(
     forcePathStyle: true,
     objects: [object(`${prefix}part-00000.jsonl`, 120), object(`${prefix}part-00001.jsonl`, 140)],
     prefix,
-    readSample: async ({ key }) => key.endsWith("part-00000.jsonl")
-      ? jsonlSamples.get(`${prefix}part-00000.jsonl`)
-      : '{"user_id":"u-2","unexpected":true}\n',
+    readRange: rangeReader(new Map([
+      [`${prefix}part-00000.jsonl`, jsonlSamples.get(`${prefix}part-00000.jsonl`)],
+      [`${prefix}part-00001.jsonl`, '{"user_id":"u-2","unexpected":true}\n'],
+    ])),
     region: "ap-northeast-2",
   }),
   (error) => error?.code === "SOURCE_PREFIX_SCHEMA_MISMATCH" && error?.status === 400,
 );
+
+const previousConcurrency = process.env.ASKLAKE_PREFIX_VALIDATION_CONCURRENCY;
+process.env.ASKLAKE_PREFIX_VALIDATION_CONCURRENCY = "4";
+let activeReaders = 0;
+let maximumActiveReaders = 0;
+let representativeReadComplete = false;
+const concurrencyObjects = Array.from({ length: 9 }, (_, index) => {
+  const key = `${prefix}concurrency-${String(index).padStart(2, "0")}.jsonl`;
+  return object(key, 96);
+});
+const concurrencySamples = new Map(
+  concurrencyObjects.map(({ Key }, index) => [
+    Key,
+    `${JSON.stringify({ event_id: `evt-${index}`, event_type: "view" })}\n`,
+  ]),
+);
+const readConcurrencyRange = rangeReader(concurrencySamples);
+try {
+  await buildObjectStoragePrefixAnalysis({
+    bucket: "raw-bucket",
+    endpoint: "http://127.0.0.1:9000",
+    fields: fields("JSONL"),
+    forcePathStyle: true,
+    objects: concurrencyObjects,
+    prefix,
+    readRange: async (range) => {
+      if (range.key !== concurrencyObjects[0].Key) {
+        assert.equal(representativeReadComplete, true);
+      }
+      activeReaders += 1;
+      maximumActiveReaders = Math.max(maximumActiveReaders, activeReaders);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const content = await readConcurrencyRange(range);
+        if (range.key === concurrencyObjects[0].Key) {
+          representativeReadComplete = true;
+        }
+        return content;
+      } finally {
+        activeReaders -= 1;
+      }
+    },
+    region: "ap-northeast-2",
+  });
+  assert.equal(maximumActiveReaders, 4);
+} finally {
+  if (previousConcurrency === undefined) {
+    delete process.env.ASKLAKE_PREFIX_VALIDATION_CONCURRENCY;
+  } else {
+    process.env.ASKLAKE_PREFIX_VALIDATION_CONCURRENCY = previousConcurrency;
+  }
+}
 
 console.log("Prefix source connector contract verified.");
 
@@ -113,6 +166,13 @@ function fields(fileType) {
 
 function object(Key, Size) {
   return { Key, LastModified: new Date("2026-07-13T00:00:00Z"), Size };
+}
+
+function rangeReader(samples) {
+  return async ({ endByte, key, startByte }) => {
+    const content = Buffer.from(samples.get(key) ?? "", "utf8");
+    return content.subarray(startByte, endByte + 1);
+  };
 }
 
 function configValue(analysisResult, label) {
