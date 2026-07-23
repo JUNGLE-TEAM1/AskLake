@@ -15,7 +15,7 @@ export const FieldLegend = React.forwardRef<
   React.HTMLAttributes<HTMLLegendElement>
 >(({ className, ...props }, ref) => (
   <legend
-    className={cn("mb-1 text-base font-semibold tracking-normal text-slate-950", className)}
+    className={cn("mb-1 text-base font-medium tracking-normal text-slate-950", className)}
     ref={ref}
     {...props}
   />
@@ -51,7 +51,7 @@ export const FieldLabel = React.forwardRef<
   React.LabelHTMLAttributes<HTMLLabelElement>
 >(({ className, ...props }, ref) => (
   <label
-    className={cn("text-sm font-semibold leading-none tracking-normal text-slate-700", className)}
+    className={cn("text-sm font-medium leading-none tracking-normal text-slate-700", className)}
     ref={ref}
     {...props}
   />
@@ -63,7 +63,7 @@ export const FieldTitle = React.forwardRef<
   React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => (
   <div
-    className={cn("text-sm font-semibold leading-none tracking-normal text-slate-900", className)}
+    className={cn("text-sm font-medium leading-none tracking-normal text-slate-900", className)}
     ref={ref}
     {...props}
   />

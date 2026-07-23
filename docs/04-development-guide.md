@@ -1674,10 +1674,13 @@ Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를
 
 ETL/Layout 스타일은 `styles/etl/`, `styles/layout/`의 소유 feature 파일에서 변경한다. entrypoint import 순서 변경, 기존 중복 selector 정리, specificity 변경은 시각 회귀 근거가 있는 별도 PR로 다룬다. 인접 중복을 합칠 때도 selector, at-rule parent와 declaration 순서를 유지하고 source hash·정확한 selector inventory·해당 rule declaration 계약을 함께 갱신한다. 비인접 중복은 computed-style와 페이지별 visual baseline 없이 제거하지 않는다. Catalog 조회·선택 state는 `useCatalogExplorerState.ts`, 순수 검색·정렬은 `catalogModel.ts`, 표현은 각 page module이 소유한다.
 
+서비스 전역 글자 굵기는 마지막 import인 `styles/typography.css`가 소유한다. 본문·설명·메타데이터는 400, 탐색·필드 label·표 header·보조 조작은 500, 선택 상태·상태 badge·주요 action·section title은 600, page title과 핵심 metric 값만 700을 사용한다. 강조가 필요한 공용 컴포넌트는 임의의 800 이상 weight 대신 `data-slot` 의미를 추가하며, 변경 후 `npm run test:typography-hierarchy`로 import 순서와 강조 경계를 확인한다.
+
 ```bash
 cd frontend
 npm run test:css-catalog-boundary
 npm run test:semantic-layer-ui
+npm run test:typography-hierarchy
 npm run verify:ui-regressions
 npm run build
 ```

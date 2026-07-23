@@ -55,7 +55,7 @@ Progress.displayName = "Progress";
 const ProgressLabel = React.forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement>>(
   ({ className, ...props }, ref) => (
     <span
-      className={cn("min-w-0 truncate text-left text-xs font-semibold leading-none text-slate-600", className)}
+      className={cn("min-w-0 truncate text-left text-xs font-medium leading-none text-slate-600", className)}
       data-slot="progress-label"
       ref={ref}
       {...props}
@@ -71,7 +71,7 @@ const ProgressValue = React.forwardRef<HTMLSpanElement, React.HTMLAttributes<HTM
 
     return (
       <span
-        className={cn("text-right text-xs font-bold leading-none tabular-nums text-slate-700", className)}
+        className={cn("text-right text-xs font-semibold leading-none tabular-nums text-slate-700", className)}
         data-slot="progress-value"
         ref={ref}
         {...props}

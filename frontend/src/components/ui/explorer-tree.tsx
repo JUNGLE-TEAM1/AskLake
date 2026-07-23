@@ -190,9 +190,9 @@ function ExplorerTreeRow<T extends ExplorerTreeNode>({
       <div
         data-selected={isSelected ? "" : undefined}
         className={cn(
-          "asklake-explorer-tree-row-content group relative flex h-full w-full min-w-0 items-center rounded-sm pr-2 text-[15px] font-semibold text-slate-700 transition-colors",
+          "asklake-explorer-tree-row-content group relative flex h-full w-full min-w-0 items-center rounded-sm pr-2 text-[15px] font-normal text-slate-700 transition-colors",
           "hover:bg-slate-50",
-          isSelected && "bg-blue-50 text-blue-950",
+          isSelected && "bg-blue-50 font-semibold text-blue-950",
           node.data.disabled && "cursor-not-allowed opacity-50",
           getRowClassName?.(node),
         )}
@@ -244,7 +244,7 @@ function ExplorerTreeRow<T extends ExplorerTreeNode>({
           </span>
           <span className="min-w-0 flex-1 truncate">{getLabel?.(node) ?? node.data.label}</span>
           {node.data.meta ? (
-            <span className="ml-2 min-w-0 max-w-36 shrink truncate text-xs font-semibold text-slate-500">
+            <span className="ml-2 min-w-0 max-w-36 shrink truncate text-xs font-normal text-slate-500">
               {node.data.meta}
             </span>
           ) : null}

@@ -88,7 +88,7 @@ export function DialogShell({
         >
           <div className="grid min-w-0 gap-1.5">
             {eyebrow ? (
-              <span className="text-xs font-black uppercase tracking-normal text-blue-600">
+              <span className="text-xs font-medium uppercase tracking-normal text-blue-600">
                 {eyebrow}
               </span>
             ) : null}
