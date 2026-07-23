@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Responsive, useContainerWidth, verticalCompactor, type Layout, type LayoutItem } from "react-grid-layout";
+import { Responsive, noCompactor, useContainerWidth, verticalCompactor, type Layout, type LayoutItem } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { DashboardRuntimeWidget } from "../../../types";
@@ -14,6 +14,8 @@ type DashboardBreakpoint = keyof typeof breakpointCols;
 const gridMargin: [number, number] = [12, 12];
 const gridRowHeight = 48;
 const editGridTrailingRows = 1;
+// Free-form desktop layouts preserve intentional gaps and reject drops that overlap another widget.
+const fixedDesktopCompactor = { ...noCompactor, preventCollision: true };
 
 function layoutHeight(layout: LayoutItem[], trailingRows = 0) {
   const bottomRow = layout.reduce((bottom, item) => Math.max(bottom, item.y + item.h), 0);
@@ -72,6 +74,7 @@ export function DashboardCanvas({
 }) {
   const { containerRef, mounted, width } = useContainerWidth({ initialWidth: 1200 });
   const [resetKey, setResetKey] = useState(0);
+  const [activeBreakpoint, setActiveBreakpoint] = useState<DashboardBreakpoint>("lg");
   const widgetNodeById = useRef(new Map<string, HTMLDivElement>());
   const layout = useMemo(
     () =>
@@ -142,6 +145,7 @@ export function DashboardCanvas({
 
   // Draft layouts are persisted in the canonical 12-column coordinate system.
   const editorBreakpoint: DashboardBreakpoint | undefined = editable ? "lg" : undefined;
+  const preservesManualPlacement = editable || activeBreakpoint === "lg" || activeBreakpoint === "md";
 
   return (
     <div className="asklake-dashboard-rgl-shell" ref={containerRef}>
@@ -152,7 +156,7 @@ export function DashboardCanvas({
           breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
           className={editable ? "asklake-dashboard-rgl edit" : "asklake-dashboard-rgl"}
           cols={breakpointCols}
-          compactor={verticalCompactor}
+          compactor={preservesManualPlacement ? fixedDesktopCompactor : verticalCompactor}
           containerPadding={[0, 0]}
           dragConfig={{
             bounded: true,
@@ -166,6 +170,7 @@ export function DashboardCanvas({
           rowHeight={gridRowHeight}
           style={editGridMinHeight ? { minHeight: editGridMinHeight } : undefined}
           width={width}
+          onBreakpointChange={(breakpoint) => setActiveBreakpoint(breakpoint)}
           onDragStop={(nextLayout) => commitLayout([...nextLayout])}
           onResizeStop={(nextLayout) => commitLayout([...nextLayout])}
         >

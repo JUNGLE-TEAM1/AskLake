@@ -118,3 +118,17 @@ test("the draft editor keeps the canonical 12-column breakpoint while published 
   );
   assert.match(dashboardCanvasSource, /breakpoint=\{editorBreakpoint\}/);
 });
+
+test("desktop dashboards preserve intentional gaps and block colliding widget moves", () => {
+  assert.match(
+    dashboardCanvasSource,
+    /import \{ Responsive, noCompactor, useContainerWidth, verticalCompactor, type Layout, type LayoutItem \} from "react-grid-layout";/,
+  );
+  assert.match(dashboardCanvasSource, /const fixedDesktopCompactor = \{ \.\.\.noCompactor, preventCollision: true \};/);
+  assert.match(dashboardCanvasSource, /const preservesManualPlacement = editable \|\| activeBreakpoint === "lg" \|\| activeBreakpoint === "md";/);
+  assert.match(
+    dashboardCanvasSource,
+    /compactor=\{preservesManualPlacement \? fixedDesktopCompactor : verticalCompactor\}/,
+  );
+  assert.match(dashboardCanvasSource, /onBreakpointChange=\{\(breakpoint\) => setActiveBreakpoint\(breakpoint\)\}/);
+});
