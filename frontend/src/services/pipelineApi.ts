@@ -1,4 +1,5 @@
 import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, CreateTrinoSqlJobRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, JobStatusListResult, KafkaContinuousBatch, KafkaContinuousSession } from "../types";
+import type { ApiRequestOptions } from "./apiClient";
 import { toCreatePipelineRequest, toUpdatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
 
@@ -41,8 +42,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline): Promise
   return apiClient.post<PipelineCreationResult>("/api/etl/jobs", request);
 }
 
-export async function getJob(jobId: string): Promise<JobRowData> {
-  return apiClient.get<JobRowData>(`/api/etl/jobs/${encodeURIComponent(jobId)}`);
+export async function getJob(jobId: string, options: ApiRequestOptions = {}): Promise<JobRowData> {
+  return apiClient.get<JobRowData>(`/api/etl/jobs/${encodeURIComponent(jobId)}`, options);
 }
 
 export async function getJobStatuses(jobIds: string[]): Promise<JobStatusListResult> {

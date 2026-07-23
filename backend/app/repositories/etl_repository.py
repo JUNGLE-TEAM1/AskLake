@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import inspect, select, text
+from sqlalchemy import Text, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.compatibility import record_legacy_runtime_error_projection
@@ -18,8 +18,9 @@ from app.models import (
     KafkaSnapshotModel,
 )
 from app.models.base import Base
-from app.repositories.catalog_repository import ensure_catalog_schema
 from app.repositories import etl_job_list_repository
+from app.repositories.catalog_repository import ensure_catalog_schema
+from app.repositories.etl_schema_defaults import ETL_JOB_COLUMN_DEFINITIONS
 from app.schemas.etl import (
     CatalogDataset,
     ContinuousMaintenanceRun,
@@ -34,7 +35,12 @@ from app.services.rule_compiler import compile_rule_set
 _schema_ready_bind_ids: set[int] = set()
 
 
-def ensure_schema(db: Session) -> None:
+def _column_needs_text_migration(column: dict[str, Any]) -> bool:
+    column_type = column["type"]
+    return not isinstance(column_type, Text) or getattr(column_type, "length", None) is not None
+
+
+def ensure_schema(db: Session, *, bootstrap: bool = False) -> None:
     bind = db.get_bind()
     bind_key = id(bind)
     if bind_key in _schema_ready_bind_ids:
@@ -42,75 +48,25 @@ def ensure_schema(db: Session) -> None:
     if not settings.startup_schema_management_enabled:
         _schema_ready_bind_ids.add(bind_key)
         return
+    if bind.dialect.name != "sqlite" and not bootstrap:
+        raise RuntimeError("ETL metadata schema was not bootstrapped before repository access")
 
     with bind.begin() as connection:
+        if connection.dialect.name == "postgresql":
+            connection.execute(text(
+                "SET LOCAL lock_timeout = "
+                f"'{settings.database_schema_lock_timeout_seconds}s'"
+            ))
         Base.metadata.create_all(bind=connection)
         inspector = inspect(connection)
-        existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
-        if "payload" in existing_columns:
-            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
-        column_defs = {
-            "compression": "VARCHAR(64)",
-            "continuous_config": "JSON",
-            "created_by": "VARCHAR(255)",
-            "created_by_profile": "JSON",
-            "dag_steps": "JSON",
-            "dag_steps_by_run_id": "JSON",
-            "dataset_id": "VARCHAR(120)",
-            "execution_mode": "VARCHAR(32)",
-            "last_run": "VARCHAR(64)",
-            "last_state": "TEXT",
-            "name": "VARCHAR(255)",
-            "next_run": "VARCHAR(255)",
-            "owner": "VARCHAR(255)",
-            "partition": "VARCHAR(255)",
-            "partition_columns": "JSON",
-            "index_columns": "JSON",
-            "iceberg_target": "JSON",
-            "job_kind": "VARCHAR(64)",
-            "permission_roles": "JSON",
-            "permission_summary": "TEXT",
-            "progress": "JSON",
-            "quality_invalid_rows": "JSON",
-            "quality_rules": "JSON",
-            "quality_score": "FLOAT",
-            "quality_status": "VARCHAR(32)",
-            "rag": "BOOLEAN",
-            "record_parsing": "JSON",
-            "retry_policy": "JSON",
-            "retry_policy_summary": "VARCHAR(255)",
-            "run_limit_summary": "VARCHAR(255)",
-            "schedule": "VARCHAR(255)",
-            "schedule_policy": "JSON",
-            "schedule_summary": "TEXT",
-            "schema_columns": "JSON",
-            "schema_fingerprint": "TEXT",
-            "schema_sample_rows": "JSON",
-            "schema_summary": "TEXT",
-            "rule_summary": "TEXT",
-            "rule_contract_version": "VARCHAR(16)",
-            "rules": "JSON",
-            "source": "VARCHAR(255)",
-            "source_config": "JSON",
-            "source_label": "VARCHAR(255)",
-            "source_type": "VARCHAR(120)",
-            "sql_recipe": "JSON",
-            "stats": "JSON",
-            "status": "VARCHAR(64)",
-            "storage_path": "VARCHAR(512)",
-            "storage_type": "VARCHAR(64)",
-            "tag": "VARCHAR(64)",
-            "target": "VARCHAR(255)",
-            "target_description": "TEXT",
-            "target_database": "VARCHAR(255)",
-            "target_format": "VARCHAR(120)",
-            "target_layer": "VARCHAR(32)",
-            "target_path": "VARCHAR(512)",
-            "target_tags": "JSON",
-            "transform_output_columns": "JSON",
-            "transform_steps": "JSON",
+        existing_job_columns = {
+            column["name"]: column
+            for column in inspector.get_columns("etl_jobs")
         }
-        for column_name, column_type in column_defs.items():
+        existing_columns = set(existing_job_columns)
+        if "payload" in existing_columns and not existing_job_columns["payload"]["nullable"]:
+            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
+        for column_name, column_type in ETL_JOB_COLUMN_DEFINITIONS.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
 
@@ -187,15 +143,31 @@ def ensure_schema(db: Session) -> None:
             else:
                 sql_value = f"'{default_value}'"
             connection.execute(text(f"UPDATE etl_jobs SET {column_name} = {sql_value} WHERE {column_name} IS NULL"))
-        if "schema_fingerprint" in existing_columns:
+        if (
+            "schema_fingerprint" in existing_columns
+            and _column_needs_text_migration(existing_job_columns["schema_fingerprint"])
+        ):
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
-        if "last_state" in existing_columns:
+        if (
+            "last_state" in existing_columns
+            and _column_needs_text_migration(existing_job_columns["last_state"])
+        ):
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN last_state TYPE TEXT"))
 
-        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
-        if "failed_stage" in existing_run_columns:
+        existing_run_column_defs = {
+            column["name"]: column
+            for column in inspector.get_columns("etl_runs")
+        }
+        existing_run_columns = set(existing_run_column_defs)
+        if (
+            "failed_stage" in existing_run_columns
+            and _column_needs_text_migration(existing_run_column_defs["failed_stage"])
+        ):
             connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN failed_stage TYPE TEXT"))
-        if "error_summary" in existing_run_columns:
+        if (
+            "error_summary" in existing_run_columns
+            and _column_needs_text_migration(existing_run_column_defs["error_summary"])
+        ):
             connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN error_summary TYPE TEXT"))
 
 
@@ -215,8 +187,6 @@ def ensure_schema(db: Session) -> None:
 
     ensure_catalog_schema(db)
     _schema_ready_bind_ids.add(bind_key)
-
-
 def list_jobs(db: Session) -> list[JobRowData]:
     ensure_schema(db)
     jobs = db.scalars(select(ETLJobModel).order_by(ETLJobModel.created_at.desc())).all()

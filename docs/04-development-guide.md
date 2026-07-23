@@ -1921,3 +1921,30 @@ identity의 active claim 1개, SparkApplication checkpoint 재개, Iceberg snaps
 publication을 함께 확인한다. Backend 검증은 V2-era Catalog payload의 retired
 `serving/clickhouse` binding을 read path에서 격리하고 유효한 `archive/trino` binding을
 보존하는 호환성 회귀도 함께 실행한다.
+
+## EKS 로그인 DB lock 회귀 검증
+
+Job 상세 화면은 `(flow, jobId)` 변경에만 상세 API를 호출해야 한다. Job 응답으로 상태
+객체가 교체되어도 상세 요청이 반복되면 안 되며 route 이탈 시 요청을 abort한다.
+
+```bash
+cd frontend
+npm run test:jobs-data-boundary
+npm run build
+
+cd ../backend
+.venv/bin/python -m unittest \
+  tests.test_metadata_schema_bootstrap \
+  tests.test_database_session_lifecycle
+
+cd ..
+bash scripts/verify-eks-web-workloads.sh
+```
+
+EKS Web upgrade는 `asklake-backend-migration` Helm hook이 먼저 완료된 뒤 FastAPI와
+collector를 rollout한다. 두 장기 실행 workload의
+`STARTUP_SCHEMA_MANAGEMENT_ENABLED`는 반드시 `false`여야 한다. migration Job 실패나
+lock timeout은 기존 workload를 유지한 채 upgrade를 실패시켜야 하며, 이를 우회하려고
+API Pod에서 schema DDL을 다시 켜지 않는다. 배포 후 로그인 성공/실패 응답, FastAPI
+rollout/ALB health와 함께 `pg_stat_activity`의 idle-in-transaction 및 relation-lock wait가
+0인지 확인한다.

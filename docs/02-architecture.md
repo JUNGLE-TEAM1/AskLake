@@ -854,3 +854,18 @@ retry도 저장된 Plan을 재사용한다. 새 성공 이력은 다음 새 Run�
 반영한다. 실행 중 Dynamic Allocation, 동시 Job 전역 최적화와 통계 모델 자동 학습은
 V1 범위가 아니다. 계산식, fallback, 상한과 검증 순서는
 [Spark Resource Planner 계약](spark-resource-planner-contract.md)을 따른다.
+
+## 26) Job 상세 hydrate와 운영 schema 변경 경계
+
+`/jobs/{jobId}` 상세 hydrate는 `(flow, jobId)`가 바뀔 때 한 번만 요청한다. 응답으로
+갱신된 Job 객체의 reference는 같은 상세 요청을 다시 시작하는 trigger가 아니며, route가
+바뀌거나 component가 해제되면 진행 중 요청을 abort한다. 실행 상태의 반복 갱신은
+`GET /api/etl/jobs/statuses` batch polling만 소유한다.
+
+Production EKS의 FastAPI와 Trino result collector는
+`STARTUP_SCHEMA_MANAGEMENT_ENABLED=false`로 실행한다. Helm pre-install/pre-upgrade
+migration Job이 Alembic과 metadata bootstrap을 먼저 완료하며, 실제 column type이 다른
+경우에만 제한된 `lock_timeout` 안에서 DDL을 수행한다. API request와 worker hot path는
+schema DDL을 실행하지 않는다. PostgreSQL 연결에는 bounded
+`idle_in_transaction_session_timeout`을 적용하고 request session 종료 시 열린 transaction을
+명시적으로 rollback한 뒤 연결을 pool에 반환한다.

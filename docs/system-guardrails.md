@@ -238,3 +238,15 @@ owner와 같은 generation으로 Ready 1/1이어야 하며 구형 external EC2 o
   복구가 검증되기 전에는 `enforce`로 승격하지 않는다.
 - image rollout, runtime/Web Helm mutation과 비용 발생 Spark Run은 각각 별도
   승인을 요구한다.
+
+# EKS DB pool/DDL incident guardrail
+
+- Job 상세 hydrate는 `(flow, jobId)`만 요청 identity로 사용한다. 응답으로 교체되는 Job
+  object를 effect dependency에 다시 넣거나 상세 endpoint를 status polling처럼 호출하지 않는다.
+- FastAPI와 collector의 `STARTUP_SCHEMA_MANAGEMENT_ENABLED`는 production EKS에서
+  `false`다. schema 변경은 bounded lock timeout을 가진 Helm pre-upgrade migration Job만
+  소유하며 no-op `ALTER COLUMN TYPE`을 실행하지 않는다.
+- request DB session은 종료 시 열린 transaction을 rollback하고 PostgreSQL
+  `idle_in_transaction_session_timeout`을 적용한다.
+- rollout 합격 조건에는 로그인 endpoint가 pool timeout 없이 정상 응답하는지,
+  `pg_stat_activity`의 idle-in-transaction 및 relation-lock wait가 0인지가 포함된다.
