@@ -19,6 +19,7 @@ import {
   buildTrinoExecutionTimelineModel,
   type TrinoExecutionStageStatus,
 } from "./trinoExecutionTimeline";
+import type { SqlValidationFailureKind } from "./sqlPreflightErrors";
 import styles from "./SqlExecutionInfo.module.css";
 
 const LARGE_RESULT_ROW_THRESHOLD = 100_000;
@@ -39,6 +40,7 @@ export type SqlExecutionInfoProps = {
   submissionError?: string | null;
   submissionPending: boolean;
   validationError?: string | null;
+  validationFailureKind?: SqlValidationFailureKind | null;
   validationPending: boolean;
 };
 
@@ -140,14 +142,15 @@ function QueryEvaluation({
   estimatePending,
   queryEngineStatus,
   validationError,
+  validationFailureKind,
   validationPending,
-}: Pick<SqlExecutionInfoProps, "estimate" | "estimateError" | "estimatePending" | "queryEngineStatus" | "validationError" | "validationPending">) {
+}: Pick<SqlExecutionInfoProps, "estimate" | "estimateError" | "estimatePending" | "queryEngineStatus" | "validationError" | "validationFailureKind" | "validationPending">) {
   const registrationMessage = engineStatusMessage(queryEngineStatus);
   const evaluationStatus = registrationMessage
     ?? (validationPending
       ? "Trino SQL 검증 중"
       : validationError
-        ? "Trino SQL 검증 실패"
+        ? validationFailureKind === "transport" ? "API 서버 연결 실패" : "Trino SQL 검증 실패"
         : estimatePending
           ? "실행 규모 계산 중"
           : estimate
@@ -352,6 +355,7 @@ export function SqlExecutionInfo(props: SqlExecutionInfoProps) {
         estimatePending={props.estimatePending}
         queryEngineStatus={props.queryEngineStatus}
         validationError={props.validationError}
+        validationFailureKind={props.validationFailureKind}
         validationPending={props.validationPending}
       />
       <ExecutionTimeline

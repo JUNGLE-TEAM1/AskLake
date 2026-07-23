@@ -1140,6 +1140,8 @@ Production은 알려진 legacy demo 계정을 기본적으로 생성하거나 �
 
 dev EKS가 아직 HTTP ALB만 사용하는 동안에는 `asklake-runtime-config` release의 private runtime values에 `AUTH_SESSION_COOKIE_SECURE: "false"`가 필요하다. FastAPI가 참조하는 `asklake-runtime` ConfigMap에 이 값이 렌더되면 로그인 후 새로고침에서도 세션 쿠키를 전송한다. 운영 기본값과 HTTPS 환경은 `true`를 유지하고, 인증서 적용 후 dev 값도 즉시 `true`로 되돌린다. `APP_ENV`를 개발 모드로 낮추는 우회는 header-auth fallback을 열 수 있으므로 사용하지 않는다.
 
+dev EKS demo URL은 현재 Ingress status의 internet-facing ALB hostname을 private handoff에서 확인하고, 같은 origin의 `/`와 `/api/health`가 모두 HTTP 200인 경우에만 전달한다. 이전 EC2 IP 기반 `sslip.io` 주소는 인스턴스가 `running`이어도 80/443 listener와 `/api` route가 없을 수 있으므로 EKS 전환 뒤 canonical URL로 재사용하지 않는다. SQL 분석에서 `API 서버 연결 실패`가 보이면 SQL을 수정하기 전에 현재 browser origin과 `/api/health`를 확인한다. backend가 반환한 structured SQL validation 오류만 `Trino SQL 검증 실패`로 판정한다.
+
 실제 서버에서는 Compose 실행 전에 durable host root와 env를 준비하고 preflight를 통과시킨다. `ASKLAKE_HOST_DATA_DIR` root와 별도 read-only replay 입력인 `ASKLAKE_REPLAY_HOST_INPUT_DIR`는 먼저 존재해야 한다. `spark-runtime-guard`가 root 아래 `spark-ivy`, `spark-output`, `spark-runs`, `samples`, `review-text-models`를 생성하고 UID/GID `185:185`로 정규화하므로 수동 subdirectory `chown`은 필요 없다.
 
 ```bash
