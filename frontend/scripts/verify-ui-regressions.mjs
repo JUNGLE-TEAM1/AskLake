@@ -817,6 +817,16 @@ const checks = [
     ],
   },
   {
+    name: "Global notifications stay anchored to the bottom-right corner",
+    file: "src/styles/base.css",
+    patterns: [
+      /\.app-notification-stack\s*\{[^}]*position:\s*fixed;[^}]*bottom:\s*24px;[^}]*right:\s*28px;/s,
+    ],
+    forbiddenPatterns: [
+      /\.app-notification-stack\s*\{[^}]*top:/s,
+    ],
+  },
+  {
     name: "Catalog lineage keeps PROCESS data but collapses it in the UI projection",
     files: [
       "src/pages/catalog/CatalogLineage.tsx",
