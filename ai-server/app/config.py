@@ -51,11 +51,12 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
     max_request_bytes: int = Field(default=64 * 1024, ge=1024, le=1024 * 1024)
     # Product APIs still bound user-authored prompts to 8,000 characters.
-    # The internal request also carries generated SQL contracts for every
-    # selected Dataset, so it needs bounded headroom without dropping schema.
+    # The internal request also carries Dashboard Assistant widget context plus
+    # MCP-resolved catalog contracts. Keep that context bounded, but allow the
+    # complete authorized dashboard scope instead of rejecting it at 32 KiB.
     max_prompt_chars: int = Field(default=32_000, ge=1, le=32_000)
     max_current_query_chars: int = Field(default=20_000, ge=0, le=64_000)
-    max_context_bytes: int = Field(default=32 * 1024, ge=0, le=256 * 1024)
+    max_context_bytes: int = Field(default=64 * 1024, ge=0, le=256 * 1024)
     max_context_items: int = Field(default=32, ge=0, le=128)
     max_tool_payloads: int = Field(default=16, ge=0, le=64)
     max_tool_payload_bytes: int = Field(default=32 * 1024, ge=0, le=256 * 1024)

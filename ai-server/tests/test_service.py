@@ -41,6 +41,20 @@ def test_internal_generation_prompt_has_room_for_multi_dataset_contracts() -> No
         GenerateRequest.model_validate({"prompt": "x" * 32_001})
 
 
+def test_default_context_budget_accepts_dashboard_and_mcp_contracts() -> None:
+    """Keep the default above the combined dashboard + MCP context footprint."""
+
+    client = TestClient(create_app(make_settings()))
+
+    response = client.post(
+        "/v1/generate",
+        headers=AUTH,
+        json={"prompt": "Create a chart", "context": {"dashboard": "x" * (48 * 1024)}},
+    )
+
+    assert response.status_code == 200
+
+
 def make_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "app_env": "testing",
