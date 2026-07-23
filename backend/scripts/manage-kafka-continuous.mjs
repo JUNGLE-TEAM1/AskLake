@@ -517,6 +517,8 @@ function continuousRestRuntime() {
 function continuousEnvironment(request, workerAttemptId, runtimeReportDir, includeCredentials = true, environment = process.env) {
   const jobId = required(request.jobId, "jobId");
   const icebergTarget = requiredObject(request.icebergTarget, "icebergTarget");
+  const broker = resolveContinuousWorkerBroker(required(request.broker, "broker"), environment);
+  const kafkaAuthMode = continuousKafkaAuthMode(broker, environment);
   const storageEnvironment = Object.fromEntries(
     objectStorageDockerEnv().filter(([name]) => (
       includeCredentials
@@ -526,7 +528,8 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
   return {
     ASKLAKE_CONTINUOUS_JOB_ID: jobId,
     ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID: workerAttemptId,
-    ASKLAKE_CONTINUOUS_BROKER: resolveContinuousWorkerBroker(required(request.broker, "broker"), environment),
+    ASKLAKE_CONTINUOUS_BROKER: broker,
+    ASKLAKE_KAFKA_AUTH_MODE: kafkaAuthMode,
     ASKLAKE_CONTINUOUS_TOPIC: required(request.topic, "topic"),
     ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID: required(request.consumerGroupId, "consumerGroupId"),
     ASKLAKE_CONTINUOUS_OUTPUT_PATH: required(request.outputPath, "outputPath"),
@@ -557,6 +560,21 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
     ...storageEnvironment,
     HOME: "/tmp",
   };
+}
+
+function continuousKafkaAuthMode(broker, environment) {
+  const endpoints = String(broker || "").split(",").map((value) => value.trim()).filter(Boolean);
+  const inferred = endpoints.length && endpoints.every((value) => value.split(":").at(-1) === "9098")
+    ? "iam"
+    : "none";
+  const mode = String(environment.ASKLAKE_KAFKA_AUTH_MODE || "").trim().toLowerCase() || inferred;
+  if (!["iam", "none"].includes(mode)) {
+    throw new Error("ASKLAKE_KAFKA_AUTH_MODE must be iam or none.");
+  }
+  if (mode !== inferred) {
+    throw new Error(`ASKLAKE_KAFKA_AUTH_MODE=${mode} does not match the broker endpoint ports.`);
+  }
+  return mode;
 }
 
 function runtimeDocumentPath(base, filename) {

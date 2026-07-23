@@ -16,6 +16,12 @@ trap 'rm -f "$RENDERED_FILE" "$OPT_IN_RENDERED_FILE" "$AIRFLOW_ONLY_RENDERED_FIL
 required_files=(
   "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
   "$ROOT_DIR/airflow/Dockerfile"
+  "$ROOT_DIR/backend/Dockerfile"
+  "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+  "$ROOT_DIR/backend/scripts/kafka-continuous-kubernetes.mjs"
+  "$ROOT_DIR/backend/scripts/runtime/config.py"
+  "$ROOT_DIR/backend/scripts/runtime/kafka_continuous_runtime.py"
+  "$ROOT_DIR/backend/scripts/runtime/kafka_stream.py"
   "$ROOT_DIR/backend/scripts/spark-kubernetes-client.mjs"
   "$ROOT_DIR/backend/scripts/verify-spark-kubernetes-client.mjs"
   "$ROOT_DIR/backend/scripts/spark_job_run.py"
@@ -79,7 +85,6 @@ for required_file in "${required_files[@]}"; do
 done
 
 retired_files=(
-  "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
   "$ROOT_DIR/backend/scripts/kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
   "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs"
@@ -382,6 +387,15 @@ if grep -q 'software.amazon.msk:aws-msk-iam-auth' "$OPT_IN_RENDERED_FILE"; then
   exit 1
 fi
 grep -q 'ASKLAKE_SPARK_MSK_IAM_AUTH_JAR' "$RENDERED_FILE"
+grep -q 'FROM maven:3.9.11-eclipse-temurin-17 AS spark-msk-iam-shaded' "$ROOT_DIR/backend/Dockerfile"
+grep -q '/opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar' "$ROOT_DIR/backend/Dockerfile"
+grep -q '<artifactId>aws-msk-iam-auth</artifactId>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+grep -q '<pattern>software.amazon.awssdk</pattern>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+grep -q '<pattern>io.netty</pattern>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+grep -q 'Kubernetes MSK IAM execution requires' "$ROOT_DIR/backend/scripts/kafka-continuous-kubernetes.mjs"
+grep -q '"kafka.sasl.mechanism": "AWS_MSK_IAM"' "$ROOT_DIR/backend/scripts/runtime/config.py"
+grep -q 'kafka_security_options(config.auth_mode)' "$ROOT_DIR/backend/scripts/runtime/kafka_stream.py"
+grep -q 'load_kafka_stream(spark, config, os.environ)' "$ROOT_DIR/backend/scripts/runtime/kafka_continuous_runtime.py"
 grep -q '"spark.jars.ivy": "/tmp/.ivy2"' "$OPT_IN_RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_SOURCE_FORMAT' "$OPT_IN_RENDERED_FILE"
 grep -q 'value: "kafka"' "$OPT_IN_RENDERED_FILE"

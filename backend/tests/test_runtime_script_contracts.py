@@ -26,11 +26,16 @@ from runtime.contracts import (  # noqa: E402
     required_env,
     runtime_compatibility_path_counts,
 )
-from runtime.config import KafkaWorkerConfig, SparkJobConfig  # noqa: E402
+from runtime.config import (  # noqa: E402
+    KafkaWorkerConfig,
+    SparkJobConfig,
+    kafka_security_options,
+)
 from runtime.kafka_state import (  # noqa: E402
     normalize_stream_partition_cursors,
     stream_partition_cursor_payload,
 )
+from runtime.kafka_stream import load_kafka_stream  # noqa: E402
 
 
 class RuntimeScriptContractTests(unittest.TestCase):
@@ -111,7 +116,86 @@ class RuntimeScriptContractTests(unittest.TestCase):
             "ASKLAKE_CONTINUOUS_CHECKPOINT_PATH": "s3a://output/checkpoint",
             "ASKLAKE_CONTINUOUS_TRIGGER_SECONDS": "5",
         })
-        self.assertEqual((kafka.topic, kafka.trigger_seconds), ("events", 5))
+        self.assertEqual((kafka.topic, kafka.trigger_seconds, kafka.auth_mode), ("events", 5, "none"))
+
+        msk = KafkaWorkerConfig.from_environment({
+            "ASKLAKE_CONTINUOUS_JOB_ID": "job-msk",
+            "ASKLAKE_CONTINUOUS_BROKER": "b-1.example:9098,b-2.example:9098",
+            "ASKLAKE_CONTINUOUS_TOPIC": "events",
+            "ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID": "group-msk",
+            "ASKLAKE_CONTINUOUS_OUTPUT_PATH": "s3a://output/events",
+            "ASKLAKE_CONTINUOUS_CHECKPOINT_PATH": "s3a://output/checkpoint",
+            "ASKLAKE_CONTINUOUS_TRIGGER_SECONDS": "5",
+            "ASKLAKE_KAFKA_AUTH_MODE": "iam",
+        })
+        self.assertEqual(msk.auth_mode, "iam")
+        self.assertEqual(kafka_security_options(msk.auth_mode), {
+            "kafka.security.protocol": "SASL_SSL",
+            "kafka.sasl.mechanism": "AWS_MSK_IAM",
+            "kafka.sasl.jaas.config": "software.amazon.msk.auth.iam.IAMLoginModule required;",
+            "kafka.sasl.client.callback.handler.class": (
+                "software.amazon.msk.auth.iam.IAMClientCallbackHandler"
+            ),
+        })
+        with self.assertRaisesRegex(ValueError, "does not match|requires"):
+            KafkaWorkerConfig.from_environment({
+                "ASKLAKE_CONTINUOUS_JOB_ID": "job-invalid-auth",
+                "ASKLAKE_CONTINUOUS_BROKER": "redpanda:9092",
+                "ASKLAKE_CONTINUOUS_TOPIC": "events",
+                "ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID": "group-invalid-auth",
+                "ASKLAKE_CONTINUOUS_OUTPUT_PATH": "s3a://output/events",
+                "ASKLAKE_CONTINUOUS_CHECKPOINT_PATH": "s3a://output/checkpoint",
+                "ASKLAKE_KAFKA_AUTH_MODE": "iam",
+            })
+
+        class FakeReader:
+            def __init__(self) -> None:
+                self.options = {}
+                self.loaded = False
+
+            def format(self, value):
+                self.options["format"] = value
+                return self
+
+            def option(self, name, value):
+                self.options[name] = value
+                return self
+
+            def load(self):
+                self.loaded = True
+                return self
+
+        reader = FakeReader()
+        loaded = load_kafka_stream(
+            SimpleNamespace(readStream=reader),
+            msk,
+            {
+                "ASKLAKE_CONTINUOUS_OFFSET_POLICY": "latest",
+                "ASKLAKE_CONTINUOUS_MAX_OFFSETS": "25",
+            },
+        )
+        self.assertIs(loaded, reader)
+        self.assertTrue(reader.loaded)
+        self.assertEqual(reader.options["kafka.sasl.mechanism"], "AWS_MSK_IAM")
+        self.assertEqual(reader.options["startingOffsets"], "latest")
+        self.assertEqual(reader.options["maxOffsetsPerTrigger"], "25")
+
+    def test_continuous_record_parser_maps_nested_leaf_paths(self) -> None:
+        source = (
+            SCRIPTS_DIR / "runtime" / "kafka_continuous_runtime.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        raw_record_payload = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "raw_record_payload"
+        )
+        rendered = ast.unparse(raw_record_payload)
+
+        self.assertIn("source_path = f", rendered)
+        self.assertIn("parent_path}.{field.name}", rendered)
+        self.assertIn("isinstance(field.dataType, StructType)", rendered)
+        self.assertIn("columns_by_name.get(source_path)", rendered)
 
     def test_partition_cursor_state_is_normalized_deterministically(self) -> None:
         cursors = normalize_stream_partition_cursors([

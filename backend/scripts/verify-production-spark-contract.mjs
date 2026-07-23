@@ -206,8 +206,17 @@ const dockerfile = readFileSync(path.join(backendDir, "Dockerfile"), "utf8");
 assert.doesNotMatch(dockerfile, /\bdocker-cli\b/, "Production backend image must not install Docker CLI.");
 assert.match(dockerfile, /^FROM apache\/spark:4\.0\.1 AS spark-runtime$/m);
 assert.match(dockerfile, /^FROM python:3\.13-slim AS backend-runtime$/m);
+assert.match(dockerfile, /^FROM maven:3\.9\.11-eclipse-temurin-17 AS spark-msk-iam-shaded$/m);
 assert.match(dockerfile, /^FROM maven:3\.9\.11-eclipse-temurin-17 AS spark-runtime-dependencies$/m);
 assert.match(dockerfile, /COPY --from=spark-runtime-dependencies --chown=185:185 \/build\/jars\/ \/opt\/spark\/jars\//);
+assert.match(
+  dockerfile,
+  /COPY --from=spark-msk-iam-shaded --chown=185:185[\s\S]*\/opt\/asklake\/jars\/aws-msk-iam-auth-2\.3\.6-asklake-shaded\.jar/,
+);
+const shadedMskDependencies = readFileSync(path.join(backendDir, "spark-msk-iam-shaded", "pom.xml"), "utf8");
+assert.match(shadedMskDependencies, /<artifactId>aws-msk-iam-auth<\/artifactId>/);
+assert.match(shadedMskDependencies, /<pattern>software\.amazon\.awssdk<\/pattern>/);
+assert.match(shadedMskDependencies, /<pattern>io\.netty<\/pattern>/);
 const bakedDependencies = readFileSync(path.join(backendDir, "spark-runtime-dependencies", "pom.xml"), "utf8");
 for (const dependency of ["spark-sql-kafka-0-10_2.13", "hadoop-aws", "iceberg-spark-runtime-4.0_2.13", "postgresql"]) {
   assert.match(bakedDependencies, new RegExp(`<artifactId>${dependency.replaceAll(".", "\\.")}</artifactId>`));
@@ -263,7 +272,7 @@ assert.equal(
 console.log(continuousRestResult.stdout.trim());
 console.log(bridgeTimeoutResult.stdout.trim());
 console.log(runtimePathsResult.stdout.trim());
-console.log("Production Spark contract verified: REST runner, reboot-safe UID 185 paths, and no backend Docker dependency.");
+console.log("Production Spark contract verified: REST runner, baked MSK IAM/runtime dependencies, reboot-safe UID 185 paths, and no backend Docker dependency.");
 
 function requiredService(config, name) {
   const service = config.services?.[name];

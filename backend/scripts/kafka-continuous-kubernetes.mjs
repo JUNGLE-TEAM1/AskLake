@@ -2,6 +2,8 @@
 
 import { sparkApplicationName } from "./spark-kubernetes-client.mjs";
 
+const MSK_IAM_AUTH_JAR = "local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar";
+
 export function buildContinuousSparkApplication({
   jobId,
   runtime,
@@ -16,6 +18,15 @@ export function buildContinuousSparkApplication({
     "asklake.worker-attempt-id": workerAttemptId,
   };
   const env = kubernetesEnvironment(runtimeEnvironment, environment);
+  const kafkaAuthMode = String(runtimeEnvironment.ASKLAKE_KAFKA_AUTH_MODE || "").trim().toLowerCase();
+  if (!["iam", "none"].includes(kafkaAuthMode)) {
+    throw new Error("Kubernetes Continuous execution requires ASKLAKE_KAFKA_AUTH_MODE=iam or none.");
+  }
+  const configuredMskIamJar = String(environment.ASKLAKE_SPARK_MSK_IAM_AUTH_JAR || "").trim();
+  if (kafkaAuthMode === "iam" && configuredMskIamJar !== MSK_IAM_AUTH_JAR) {
+    throw new Error(`Kubernetes MSK IAM execution requires ${MSK_IAM_AUTH_JAR}.`);
+  }
+  const jars = kafkaAuthMode === "iam" ? [configuredMskIamJar] : [];
   const workload = {
     labels,
     env,
@@ -38,7 +49,12 @@ export function buildContinuousSparkApplication({
       mainApplicationFile: environment.ASKLAKE_SPARK_CONTINUOUS_SCRIPT || "/opt/asklake/scripts/kafka_continuous_stream.py",
       sparkVersion: environment.ASKLAKE_SPARK_KUBERNETES_VERSION || "4.0.1",
       restartPolicy: { type: "Never" },
-      deps: packages.length ? { packages } : undefined,
+      deps: packages.length || jars.length
+        ? {
+            ...(packages.length ? { packages } : {}),
+            ...(jars.length ? { jars } : {}),
+          }
+        : undefined,
       hadoopConf: kubernetesHadoopConf(environment),
       sparkConf: {
         "spark.sql.shuffle.partitions": String(positiveInt(environment.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS, 4)),

@@ -289,7 +289,7 @@ Iceberg/Catalog를 변경하지 않는다.
 
 실제 AWS S3 경로까지 확인할 때는 개발용 output bucket만 명시하고 아래 opt-in smoke를 실행한다. 이 검증은 3행 fixture를 `asklake-validation/issue-931/<고유 run>/`에 올린 뒤 같은 Spark runtime으로 S3A source read, run 전용 Parquet materialization, 정식 Parquet publish를 수행한다. 원본 물리 read 1회, staging 정리, 정식 Parquet 존재를 확인하고 `finally`에서 해당 run prefix의 현재 객체와 version/delete marker를 모두 삭제해 각각 residue 0을 검증한다. 공유 EKS 설정이나 SparkApplication은 변경하지 않는다.
 
-EKS에서는 runtime package download를 사용하지 않으므로 S3A와 Iceberg 검증 전에 immutable Spark image에 `hadoop-aws`, Iceberg Spark runtime, PostgreSQL JDBC JAR이 bake됐는지 image build gate를 통과해야 한다. 이 계약이 없으면 `S3AFileSystem` 또는 Iceberg extension class 로드 단계에서 데이터 처리 전에 실패한다.
+EKS에서는 runtime package download를 사용하지 않으므로 S3A와 Iceberg 검증 전에 immutable Spark image에 `hadoop-aws`, Iceberg Spark runtime, PostgreSQL JDBC JAR이 bake됐는지 image build gate를 통과해야 한다. MSK Continuous까지 검증할 때는 AWS SDK/Netty를 relocate한 image-local MSK IAM shaded JAR과 `deps.jars` exact local URI 계약도 함께 통과해야 한다. 이 계약이 없으면 `S3AFileSystem`, Iceberg extension 또는 MSK callback class 로드 단계에서 데이터 처리 전에 실패한다.
 
 ```bash
 ASKLAKE_VERIFY_S3_STAGING_LIVE=true \
