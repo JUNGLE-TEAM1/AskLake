@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from sqlalchemy import String, Text
+
 from app import main
 from app.migrations.metadata_schema import bootstrap_metadata_schema
 from app.repositories import etl_repository
@@ -17,6 +19,25 @@ class MetadataSchemaBootstrapTests(unittest.TestCase):
             etl_repository.ensure_schema(database)
 
         bind.begin.assert_not_called()
+
+    def test_postgres_repository_access_cannot_start_runtime_schema_ddl(self) -> None:
+        database = MagicMock()
+        bind = MagicMock()
+        bind.dialect.name = "postgresql"
+        database.get_bind.return_value = bind
+        etl_repository._schema_ready_bind_ids.discard(id(bind))
+
+        with (
+            patch.object(etl_repository.settings, "startup_schema_management_enabled", True),
+            self.assertRaisesRegex(RuntimeError, "not bootstrapped"),
+        ):
+            etl_repository.ensure_schema(database)
+
+        bind.begin.assert_not_called()
+
+    def test_text_columns_skip_noop_type_migration(self) -> None:
+        self.assertFalse(etl_repository._column_needs_text_migration({"type": Text()}))
+        self.assertTrue(etl_repository._column_needs_text_migration({"type": String(128)}))
 
     def test_bootstrap_owns_metadata_schema_preparation(self) -> None:
         database = object()
@@ -37,7 +58,7 @@ class MetadataSchemaBootstrapTests(unittest.TestCase):
         realtime.assert_called_once_with(database)
         continuous_sql.assert_called_once_with(database)
         catalog_deletion.assert_called_once_with(database)
-        etl.assert_called_once_with(database)
+        etl.assert_called_once_with(database, bootstrap=True)
         sql.assert_called_once_with(database)
 
     def test_startup_bootstraps_metadata_before_initializing_auth(self) -> None:

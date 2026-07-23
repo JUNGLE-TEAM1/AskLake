@@ -19,10 +19,11 @@ helm lint "$CHART_DIR" -f "$VALUES_FILE"
 helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
 
 if [[ "$(grep -c '^kind: Deployment$' "$RENDERED_FILE")" -ne 4 ]] || \
+   [[ "$(grep -c '^kind: Job$' "$RENDERED_FILE")" -ne 1 ]] || \
    [[ "$(grep -c '^kind: Service$' "$RENDERED_FILE")" -ne 3 ]] || \
    [[ "$(grep -c '^kind: NetworkPolicy$' "$RENDERED_FILE")" -ne 1 ]] || \
    [[ "$(grep -c '^kind: HorizontalPodAutoscaler$' "$RENDERED_FILE")" -ne 1 ]]; then
-  echo "web chart must render Frontend, FastAPI, AI Gateway, Collector Deployments, three Services, one private NetworkPolicy, and one FastAPI HPA" >&2
+  echo "web chart must render four Deployments, one backend migration Job, three Services, one private NetworkPolicy, and one FastAPI HPA" >&2
   exit 1
 fi
 
@@ -31,6 +32,14 @@ for contract in \
   'name: fastapi' \
   'name: ai-gateway' \
   'name: trino-result-collector' \
+  'name: asklake-backend-migration' \
+  'helm.sh/hook: pre-install,pre-upgrade' \
+  'python -m alembic upgrade head' \
+  'python -m app.migrations.run_metadata_schema' \
+  'name: STARTUP_SCHEMA_MANAGEMENT_ENABLED' \
+  'value: "false"' \
+  'name: PGOPTIONS' \
+  'idle_in_transaction_session_timeout=60000' \
   'apiVersion: autoscaling/v2' \
   'serviceAccountName: asklake-frontend' \
   'serviceAccountName: asklake-backend' \
@@ -66,13 +75,20 @@ for contract in \
   fi
 done
 
+if [[ "$(grep -c 'name: STARTUP_SCHEMA_MANAGEMENT_ENABLED' "$RENDERED_FILE")" -ne 3 ]] || \
+   [[ "$(grep -c 'value: "false"' "$RENDERED_FILE")" -lt 2 ]] || \
+   [[ "$(grep -c 'value: "true"' "$RENDERED_FILE")" -lt 1 ]]; then
+  echo "schema management must be enabled only in the migration Job" >&2
+  exit 1
+fi
+
 helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
   --set backend.trinoRuntimeSecretName=asklake-backend-trino-runtime >"$RENDERED_FILE"
 grep -Fq 'name: asklake-backend-trino-runtime' "$RENDERED_FILE"
 grep -Fq 'secretName: asklake-backend-trino-runtime' "$RENDERED_FILE"
 
-if [[ "$(grep -c '@sha256:' "$RENDERED_FILE")" -ne 4 ]]; then
-  echo "web workloads must use four digest-pinned image references" >&2
+if [[ "$(grep -c '@sha256:' "$RENDERED_FILE")" -ne 5 ]]; then
+  echo "web workloads and migration Job must use five digest-pinned image references" >&2
   exit 1
 fi
 
@@ -83,8 +99,8 @@ if [[ -z "$fastapi_image" || "$collector_image" != "$fastapi_image" ]]; then
   exit 1
 fi
 
-if [[ "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -ne 4 ]]; then
-  echo "web workloads must schedule all four Deployments on AMD64 nodes" >&2
+if [[ "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -ne 5 ]]; then
+  echo "web workloads and migration Job must schedule on AMD64 nodes" >&2
   exit 1
 fi
 

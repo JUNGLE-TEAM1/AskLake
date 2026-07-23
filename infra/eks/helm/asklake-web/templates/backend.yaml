@@ -54,6 +54,7 @@ spec:
                 name: {{ .Values.backend.trinoRuntimeSecretName }}
             {{- end }}
           env:
+            - {name: STARTUP_SCHEMA_MANAGEMENT_ENABLED, value: "false"}
             - {name: ASKLAKE_KAFKA_ALLOWED_TOPIC_PREFIXES, value: {{ .Values.backend.kafkaAllowedTopicPrefixes | quote }}}
             - name: TRINO_ICEBERG_JDBC_USER
               valueFrom:

@@ -46,6 +46,8 @@ spec:
             - secretRef:
                 name: {{ .Values.backend.trinoRuntimeSecretName }}
             {{- end }}
+          env:
+            - {name: STARTUP_SCHEMA_MANAGEMENT_ENABLED, value: "false"}
           volumeMounts:
             - name: backend-runtime-files
               mountPath: /var/run/asklake/secrets

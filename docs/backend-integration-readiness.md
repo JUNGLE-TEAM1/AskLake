@@ -725,6 +725,18 @@ Phase 3은 추가로 `tests.test_sql_execution_tree_locking`, `tests.test_etl_jo
 - [x] nightly의 isolated loopback·credential fail-closed guard
 - [ ] 실제 Kafka/Spark/object storage/browser nightly는 `self-hosted + asklake-e2e` runner에서 배포 후보마다 실행
 
+## EKS authentication/database lock readiness
+
+- [x] Job 상세 hydrate는 Job object reference 변경으로 재실행되지 않고 route cleanup에서
+  in-flight request를 abort한다.
+- [x] request session 종료 시 열린 transaction을 rollback하고, PostgreSQL 연결은
+  `idle_in_transaction_session_timeout`으로 방치 transaction을 제한한다.
+- [x] metadata bootstrap은 실제 type drift가 있을 때만 DDL을 실행하며 lock wait는 제한된다.
+- [x] EKS FastAPI/collector는 runtime schema management를 끄고 Helm migration Job이
+  Alembic과 metadata bootstrap을 rollout 전에 단독 실행한다.
+- [ ] dev EKS rollout 후 실제 로그인, ALB health, idle-in-transaction 0,
+  relation-lock wait 0을 live evidence로 확인한다.
+
 ## Kafka Job engine routing readiness (#1073)
 
 ## EKS Realtime V1-only profile readiness (#1101)

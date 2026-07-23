@@ -31,6 +31,17 @@ backend:
   replicaCount: 0
   terminationGracePeriodSeconds: 360
   preStopDelaySeconds: 310
+  migration:
+    enabled: true
+    activeDeadlineSeconds: 180
+    backoffLimit: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   autoscaling:
     enabled: false
     minReplicas: 2

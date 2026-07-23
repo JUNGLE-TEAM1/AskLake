@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     database_url: str = "postgresql+psycopg://asklake:asklake_dev@localhost:54328/asklake"
     database_connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
+    database_idle_in_transaction_timeout_seconds: int = Field(default=60, ge=5, le=600)
+    database_schema_lock_timeout_seconds: int = Field(default=5, ge=1, le=30)
     local_lake_storage_dir: str | None = None
     openai_api_key: str | None = None
     openai_assistant_enabled: bool = True

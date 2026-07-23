@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
 import { apiConfig } from "../../services/apiClient";
@@ -22,15 +22,19 @@ export function useJobRouteHydration({
   setSelectedJob: Dispatch<SetStateAction<JobRowData>>;
 }) {
   const matchedJob = jobId ? jobs.find((job) => job.id === jobId) : undefined;
+  const matchedJobRef = useRef(matchedJob);
+  matchedJobRef.current = matchedJob;
 
   useEffect(() => {
     let cancelled = false;
+    const requestController = new AbortController();
     const needsFullJobDetail = jobId
       && !apiConfig.useMock
       && (flow === "jobDetail" || flow === "jobRuns");
     if (needsFullJobDetail) {
-      if (matchedJob) setSelectedJob(matchedJob);
-      void getPipelineJob(jobId)
+      const initialMatchedJob = matchedJobRef.current;
+      if (initialMatchedJob) setSelectedJob(initialMatchedJob);
+      void getPipelineJob(jobId, { signal: requestController.signal })
         .then((detail) => {
           if (cancelled) return;
           const normalizedDetail = normalizeJobRow(detail);
@@ -50,17 +54,24 @@ export function useJobRouteHydration({
           ));
         })
         .catch((error: unknown) => {
+          if (requestController.signal.aborted) return;
           if (cancelled || !(error instanceof Error) || !error.message.includes("404")) return;
           setSelectedJob(buildMissingJobFromRoute(jobId));
         });
-    } else if (jobId && matchedJob) {
-      setSelectedJob(matchedJob);
     }
 
     return () => {
       cancelled = true;
+      requestController.abort();
     };
-  }, [flow, jobId, matchedJob, setJobs, setSelectedJob]);
+  }, [flow, jobId, setJobs, setSelectedJob]);
+
+  useEffect(() => {
+    const needsFullJobDetail = flow === "jobDetail" || flow === "jobRuns";
+    if (!needsFullJobDetail && jobId && matchedJob) {
+      setSelectedJob(matchedJob);
+    }
+  }, [flow, jobId, matchedJob, setSelectedJob]);
 }
 
 

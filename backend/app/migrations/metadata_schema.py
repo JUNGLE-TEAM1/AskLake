@@ -25,6 +25,6 @@ def bootstrap_metadata_schema(db: Session) -> MetadataSchemaBootstrapResult:
     ensure_realtime_event_schema(db)
     ensure_continuous_sql_schema(db)
     ensure_catalog_deletion_schema(db)
-    etl_repository.ensure_schema(db)
+    etl_repository.ensure_schema(db, bootstrap=True)
     ensure_sql_schema(db)
     return MetadataSchemaBootstrapResult(dashboard_versions=dashboard_versions)

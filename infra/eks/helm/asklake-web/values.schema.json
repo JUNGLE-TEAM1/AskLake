@@ -241,12 +241,23 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "autoscaling", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "sparkRuntimeSecretName", "runtimeSecretTrinoCaKey", "kafkaAllowedTopicPrefixes", "realtime", "resources"],
+      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "migration", "autoscaling", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "sparkRuntimeSecretName", "runtimeSecretTrinoCaKey", "kafkaAllowedTopicPrefixes", "realtime", "resources"],
       "properties": {
         "image": { "type": "string" },
         "replicaCount": { "type": "integer", "minimum": 0 },
         "terminationGracePeriodSeconds": { "type": "integer", "const": 360 },
         "preStopDelaySeconds": { "type": "integer", "const": 310 },
+        "migration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "activeDeadlineSeconds", "backoffLimit", "resources"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "activeDeadlineSeconds": { "type": "integer", "minimum": 30, "maximum": 600 },
+            "backoffLimit": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "resources": { "type": "object" }
+          }
+        },
         "autoscaling": { "$ref": "#/$defs/autoscaling" },
         "serviceAccountName": { "type": "string", "const": "asklake-backend" },
         "service": { "$ref": "#/$defs/backendService" },
