@@ -68,7 +68,12 @@ class CatalogRepository:
         lineage_graph = payload.get("lineageGraph") if payload else None
         return lineage_graph if isinstance(lineage_graph, dict) else None
 
-    def save_dataset_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def save_dataset_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        commit: bool = True,
+    ) -> dict[str, Any]:
         ensure_catalog_schema(self.db)
         dataset_id = str(payload["id"])
         model = self.get_dataset_model_for_update(dataset_id)
@@ -80,7 +85,8 @@ class CatalogRepository:
                 setattr(model, key, value)
 
         self.db.flush()
-        self.db.commit()
+        if commit:
+            self.db.commit()
         return payload
 
     def _raise_if_deletion_in_progress(self, dataset_id: str) -> None:

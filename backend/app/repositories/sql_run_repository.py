@@ -17,7 +17,12 @@ class SqlRunRepository:
         model = self.db.get(SqlRunModel, run_id)
         return model.payload if model else None
 
-    def save_run_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def save_run_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        commit: bool = True,
+    ) -> dict[str, Any]:
         ensure_sql_schema(self.db)
         run_id = str(payload["runId"])
         dataset_id = str(payload.get("datasetId") or payload.get("baseDatasetId") or "")
@@ -45,7 +50,8 @@ class SqlRunRepository:
                 model.collector_lease_expires_at = None
 
         self.db.flush()
-        self.db.commit()
+        if commit:
+            self.db.commit()
         return payload
 
     def reserve_trino_submission(
@@ -211,6 +217,43 @@ class SqlRunRepository:
                 SqlRunModel.payload["engine"].astext == "trino-job-materialization",
                 SqlRunModel.payload["jobId"].astext == job_id,
                 SqlRunModel.payload["status"].astext.in_(["queued", "running"]),
+            )
+            .order_by(SqlRunModel.created_at.desc(), SqlRunModel.id.desc())
+        )
+        return dict(model.payload or {}) if model is not None else None
+
+    def get_unfinalized_trino_job_run_payload(self, job_id: str) -> dict[str, Any] | None:
+        """Return any Job run whose publication/finalization boundary is incomplete."""
+
+        ensure_sql_schema(self.db)
+        model = self.db.scalar(
+            select(SqlRunModel)
+            .where(
+                SqlRunModel.payload["engine"].as_string() == "trino-job-materialization",
+                SqlRunModel.payload["jobId"].as_string() == job_id,
+                or_(
+                    SqlRunModel.payload["status"].as_string().in_(["queued", "running"]),
+                    SqlRunModel.payload["finalized"].as_boolean().is_not(True),
+                ),
+            )
+            .order_by(SqlRunModel.created_at.desc(), SqlRunModel.id.desc())
+        )
+        return dict(model.payload or {}) if model is not None else None
+
+    def get_latest_trino_job_auto_refresh_run_payload(
+        self,
+        job_id: str,
+        source_revision: int,
+    ) -> dict[str, Any] | None:
+        """Return durable evidence for one Job/source-revision refresh claim."""
+
+        ensure_sql_schema(self.db)
+        model = self.db.scalar(
+            select(SqlRunModel)
+            .where(
+                SqlRunModel.payload["engine"].as_string() == "trino-job-materialization",
+                SqlRunModel.payload["jobId"].as_string() == job_id,
+                SqlRunModel.payload["autoRefresh"]["sourceRevision"].as_integer() == source_revision,
             )
             .order_by(SqlRunModel.created_at.desc(), SqlRunModel.id.desc())
         )
