@@ -619,6 +619,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] `etl_runs` owner/expiry/generation 기반 singleton lease와 중복 요청 `409`
 - [x] 기본 60초 lease와 20초 heartbeat를 Spark run timeout에서 분리
 - [x] deterministic `SparkApplication` 제출·상태 조회·driver result 수집·timeout 삭제 provider
+- [x] 동적 EKS batch inline manifest 전달, UID 185 writable `/work/reports`, JDBC `secretKeyRef`-only render 회귀 계약
 - [x] create 응답 유실/중복 create의 runId identity 복구와 mismatch fencing test
 - [x] MSK IAM KafkaJS adapter와 metadata-only smoke Job
 - [x] bounded Kafka fixture → RDS JDBC catalog/S3 warehouse Iceberg commit `SparkApplication` smoke manifest

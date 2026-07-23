@@ -38,6 +38,7 @@ for contract in \
   'kubernetes.io/arch: amd64' \
   'name: asklake-runtime' \
   'name: asklake-backend-runtime' \
+  'name: asklake-spark-runtime' \
   'name: asklake-ai-gateway-runtime' \
   'serviceAccountName: asklake-ai-gateway' \
   'automountServiceAccountToken: false' \
@@ -49,6 +50,8 @@ for contract in \
   'type: Recreate' \
   'mountPath: /var/run/asklake/secrets' \
   'key: trino-ca.pem' \
+  'key: ASKLAKE_SPARK_ICEBERG_JDBC_USER' \
+  'key: ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD' \
   'path: trino-ca.pem' \
   'path: /api/health' \
   'terminationGracePeriodSeconds: 360' \

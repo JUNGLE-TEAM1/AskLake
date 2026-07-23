@@ -73,6 +73,8 @@ EKS Continuous 실행은 `ASKLAKE_CONTINUOUS_SPARK_RUNNER=kubernetes`일 때 전
 
 유한 EKS Spark batch는 RDS execution generation과 Spark attempt generation을 분리한다. FastAPI 응답 유실이나 process 교체처럼 기존 application이 terminal이 아니면 저장된 namespace/name/UID를 그대로 복구한다. 저장된 application이 terminal failure이면 같은 logical `runId` 아래에서만 다음 attempt generation을 허용하고, deterministic `-gN` application identity와 새 UID를 사용한다. 기본 상한은 두 attempt이며 최대 3을 넘길 수 없다. 이전 attempt identity는 RDS `kubernetesAttempts`에 보존하고 현재 identity와 섞지 않는다. 성공 Spark result와 Catalog materialization은 여전히 logical `runId` 하나를 key로 사용하므로 attempt가 늘어도 snapshot/materialization을 중복 확정하지 않는다.
 
+동적 EKS batch의 Job manifest는 Backend Pod-local 파일 경로에 의존하지 않고 `ASKLAKE_SPARK_JOB_MANIFEST_JSON`으로 Driver에 직접 전달한다. Driver는 inline manifest를 우선해 Iceberg target, schema/rule fingerprint와 source boundary를 복구한다. Spark runtime image는 UID/GID `185:185`가 `/work/reports`, `/work/output`, `/work/review-text-models`에 쓸 수 있도록 디렉터리 소유권을 image build 시 고정한다. Iceberg JDBC URL/user/password는 SparkApplication의 일반 `value` env에서 제거하고 `asklake-spark-runtime`의 `secretKeyRef` 한 경로로만 주입한다.
+
 Day 18 MSK authorization fault는 별도 public Run을 만들지 않는다. 기존 EKS bounded fixture Run에 대해 internal bearer 경계가 정확히 한 번의 write 시도, `AUTHORIZATION`, acknowledgement 0과 private evidence SHA-256을 검증한 뒤 RDS execution lease generation에 `faultAttempts`를 기록한다. 이후 정상 Spark 실행은 같은 Run의 다음 RDS generation을 claim한다. 이 adapter는 기존 Describe-only identity의 실제 deny evidence를 연결할 뿐 IAM, RBAC 또는 NodePool을 변경하지 않는다.
 
 Day 18 Phase 8 운영 runner는 이 제품 경계를 바꾸는 새 실행 엔진이 아니라 승인된

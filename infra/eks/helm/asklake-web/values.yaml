@@ -55,6 +55,7 @@ backend:
   runtimeConfigRevision: ""
   runtimeSecretName: asklake-backend-runtime
   trinoRuntimeSecretName: asklake-backend-runtime
+  sparkRuntimeSecretName: asklake-spark-runtime
   runtimeSecretTrinoCaKey: trino-ca.pem
   kafkaAllowedTopicPrefixes: asklake.
   realtime:

@@ -73,7 +73,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
   const icebergEnvironment = sparkIcebergEnvironment(job);
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
-  writeSparkJobManifest(manifestPath, job);
+  const jobManifest = writeSparkJobManifest(manifestPath, job);
   const storageEnvironment = Object.fromEntries(
     executionMode === "docker"
       ? objectStorageDockerEnv(job.sourceConfig ?? [])
@@ -86,6 +86,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     ASKLAKE_SPARK_OUTPUT_PATH: output.sparkPath,
     ASKLAKE_SPARK_RUN_ROW_LIMIT: sparkRowLimitFromJob(job),
     ASKLAKE_SPARK_RUN_ID: runId,
+    ASKLAKE_SPARK_JOB_MANIFEST_JSON: JSON.stringify(jobManifest),
     ASKLAKE_SPARK_JOB_MANIFEST_FILE: dockerManifestPath,
     ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE: dockerManifestPath,
     ASKLAKE_SPARK_REPORT_FILE: dockerReportPath,
@@ -412,6 +413,7 @@ function writeSparkJobManifest(manifestPath, job) {
     transformSteps: job.transformSteps ?? [],
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return manifest;
 }
 
 function sourceSelectionFromJob(job) {
@@ -1055,10 +1057,7 @@ function localOutputArtifactFromSparkPath(value) {
   if (!relativePath || relativePath.includes("\0")) return null;
   const hostPath = path.resolve(localOutputDir, ...relativePath.split("/").filter(Boolean));
   assertWithinLocalOutput(hostPath);
-  return {
-    hostPath,
-    relativePath,
-  };
+  return { hostPath, relativePath };
 }
 
 function copySparkVolumeRelativePathToHost(relativePath, hostPath, label) {

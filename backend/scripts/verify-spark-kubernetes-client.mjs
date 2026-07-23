@@ -61,8 +61,29 @@ test("Production batch runner accepts Kubernetes and renders a digest-pinned Spa
     ASKLAKE_SPARK_RUNNER: "kubernetes",
   };
   assert.equal(sparkExecutionMode(environment), "kubernetes");
-  const application = createSparkKubernetesApplication({ appName: "asklake-batch-job", environmentVariables: {}, jobId: "job-contract", runId: "run-contract" }, environment);
+  const application = createSparkKubernetesApplication({
+    appName: "asklake-batch-job",
+    environmentVariables: {
+      ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD: "must-not-be-rendered",
+      ASKLAKE_SPARK_ICEBERG_JDBC_URL: "must-not-be-rendered",
+      ASKLAKE_SPARK_ICEBERG_JDBC_USER: "must-not-be-rendered",
+      ASKLAKE_SPARK_JOB_MANIFEST_JSON: JSON.stringify({ jobId: "job-contract" }),
+    },
+    jobId: "job-contract",
+    runId: "run-contract",
+  }, environment);
   assert.equal(application.metadata.namespace, "asklake-dev");
   assert.match(application.spec.image, /@sha256:/);
   assert.equal(application.spec.driver.serviceAccount, "asklake-spark");
+  assert.equal(application.spec.driver.env.find((item) => item.name === "ASKLAKE_SPARK_JOB_MANIFEST_JSON")?.value, '{"jobId":"job-contract"}');
+  for (const name of [
+    "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD",
+    "ASKLAKE_SPARK_ICEBERG_JDBC_URL",
+    "ASKLAKE_SPARK_ICEBERG_JDBC_USER",
+  ]) {
+    const matching = application.spec.driver.env.filter((item) => item.name === name);
+    assert.equal(matching.length, 1);
+    assert.equal(matching[0].value, undefined);
+    assert.equal(matching[0].valueFrom.secretKeyRef.name, "asklake-spark-runtime");
+  }
 });

@@ -241,7 +241,7 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "autoscaling", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "kafkaAllowedTopicPrefixes", "realtime", "resources"],
+      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "autoscaling", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "sparkRuntimeSecretName", "runtimeSecretTrinoCaKey", "kafkaAllowedTopicPrefixes", "realtime", "resources"],
       "properties": {
         "image": { "type": "string" },
         "replicaCount": { "type": "integer", "minimum": 0 },
@@ -255,6 +255,7 @@
         "runtimeConfigRevision": { "type": "string", "maxLength": 128 },
         "runtimeSecretName": { "type": "string", "const": "asklake-backend-runtime" },
         "trinoRuntimeSecretName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+        "sparkRuntimeSecretName": { "type": "string", "const": "asklake-spark-runtime" },
         "runtimeSecretTrinoCaKey": { "type": "string", "const": "trino-ca.pem" },
         "kafkaAllowedTopicPrefixes": { "type": "string", "const": "asklake." },
         "realtime": { "$ref": "#/$defs/backendRealtime" },
