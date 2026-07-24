@@ -222,7 +222,7 @@ RUNTIME_FACADE_MODULES = (
 )
 
 RUNTIME_FACADE_DIGESTS = {
-    api_job_operations: "11f332bd4bd68fa0a1e294db6fd3528b1d5388fafeee9aa7cdbc0bd35ff0e94e",
+    api_job_operations: "ceb47ed862688eef9cb6c650052d174504d60dbaf80358a26737eeeda9f7ce15",
     api_review_operations: "73cdb622d8015c72d595c814f860ff98ff73b3956fbd5de6842de8d75e58350e",
     snapshot_operations: "6e6466845b2e74b89ebc8e9686401f24a5d705ccce8c2a2eeedba7638a7640e1",
     airflow_operations: "14f9effaf923eb742d7b4a6462364695b7a3c0e94854053f9162e8194d25f644",

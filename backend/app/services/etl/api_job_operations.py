@@ -93,6 +93,7 @@ RUNTIME_NAMES = {
     'require_governed_access',
     'require_permission',
     'resolve_internal_data_lake_source',
+    'run_kafka_continuous_worker',
     'safe_record_audit_event',
     'schedule_next_run_label',
     'schedule_policy_from_request',
@@ -523,6 +524,11 @@ def delete_job(db: Session, job_id: str, actor: ActorContext | None = None) -> s
             record_audit_event=safe_record_audit_event,
             require_governed_access=require_governed_access,
             require_permission=require_permission,
+            terminate_continuous_worker=lambda job, runtime: run_kafka_continuous_worker(
+                job,
+                runtime,
+                "terminate",
+            ),
         ),
     )
 

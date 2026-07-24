@@ -91,6 +91,24 @@ def kafka_fixture_job(job_id: str) -> ETLJobModel:
     return job
 
 
+def stopped_continuous_runtime(job_id: str) -> KafkaContinuousRuntimeModel:
+    return KafkaContinuousRuntimeModel(
+        job_id=job_id,
+        broker="kafka.test:9092",
+        topic="reviews.raw",
+        consumer_group_id=f"asklake-{job_id.lower()}",
+        target_identity=f"reviews_bronze:{job_id}",
+        checkpoint_path=f"s3a://asklake-output/checkpoints/{job_id}",
+        status="stopped",
+        metrics={},
+        schema_state={},
+        consumed_count=0,
+        stored_count=0,
+        quarantined_count=0,
+        failed_count=0,
+    )
+
+
 class EtlJobDeleteTests(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
@@ -142,6 +160,51 @@ class EtlJobDeleteTests(unittest.TestCase):
         ))
         self.assertIsNotNone(audit_event)
         self.assertEqual(audit_event.result, "success")
+
+    def test_delete_terminates_stopped_continuous_runtime_before_commit(self) -> None:
+        job = kafka_fixture_job("JOB-CONTINUOUS-DELETE")
+        job.execution_mode = "continuous"
+        runtime = stopped_continuous_runtime(job.id)
+        self.db.add_all([job, runtime])
+        self.db.commit()
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch(
+                "app.services.etl_service.run_kafka_continuous_worker",
+                return_value={"containerState": "not_running"},
+            ) as terminate,
+        ):
+            deleted_job_id = delete_job(self.db, job.id, ActorContext(name="Test Admin", role="admin"))
+
+        self.assertEqual(deleted_job_id, job.id)
+        terminate.assert_called_once()
+        terminated_job, terminated_runtime, action = terminate.call_args.args
+        self.assertEqual(terminated_job.id, job.id)
+        self.assertEqual(terminated_runtime.job_id, job.id)
+        self.assertEqual(action, "terminate")
+        self.assertIsNone(self.db.get(ETLJobModel, job.id))
+        self.assertIsNone(self.db.get(KafkaContinuousRuntimeModel, job.id))
+
+    def test_delete_preserves_continuous_metadata_when_termination_fails(self) -> None:
+        job = kafka_fixture_job("JOB-CONTINUOUS-DELETE-FAILED")
+        job.execution_mode = "continuous"
+        runtime = stopped_continuous_runtime(job.id)
+        self.db.add_all([job, runtime])
+        self.db.commit()
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch(
+                "app.services.etl_service.run_kafka_continuous_worker",
+                side_effect=RuntimeError("SparkApplication still exists"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "still exists"):
+                delete_job(self.db, job.id, ActorContext(name="Test Admin", role="admin"))
+
+        self.assertIsNotNone(self.db.get(ETLJobModel, job.id))
+        self.assertIsNotNone(self.db.get(KafkaContinuousRuntimeModel, job.id))
 
     def test_delete_authorizes_before_disclosing_active_run(self) -> None:
         job = delete_fixture_job("JOB-ACTIVE-PRIVATE")

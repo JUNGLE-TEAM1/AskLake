@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { continuousSparkApplication } from "./manage-kafka-continuous.mjs";
-import { sparkApplicationState } from "./spark-kubernetes-client.mjs";
+import {
+  continuousSparkApplication,
+} from "./manage-kafka-continuous.mjs";
+import {
+  sparkApplicationState,
+  waitForKubernetesWorkerDeletion,
+} from "./spark-kubernetes-client.mjs";
 
 const request = {
   broker: "redpanda:9092",
@@ -130,6 +135,48 @@ test("Kubernetes Continuous MSK IAM is image-local and fails closed on a differe
 
 test("Kubernetes completed state is the shared exited terminal state", () => {
   assert.equal(sparkApplicationState({ status: { applicationState: { state: "COMPLETED" } } }), "exited");
+});
+
+test("Kubernetes terminate waits until the SparkApplication is absent", async () => {
+  const observations = [
+    { metadata: { name: "asklake-continuous-job-delete" } },
+    { metadata: { name: "asklake-continuous-job-delete" } },
+    null,
+  ];
+  const sleeps = [];
+  await waitForKubernetesWorkerDeletion(
+    {
+      async get() {
+        return observations.shift();
+      },
+    },
+    "asklake-continuous-job-delete",
+    {
+      maxAttempts: 3,
+      pollIntervalMs: 25,
+      sleepFn: async (milliseconds) => sleeps.push(milliseconds),
+    },
+  );
+  assert.deepEqual(sleeps, [25, 25]);
+});
+
+test("Kubernetes terminate fails closed while the SparkApplication remains", async () => {
+  await assert.rejects(
+    waitForKubernetesWorkerDeletion(
+      {
+        async get() {
+          return { metadata: { name: "asklake-continuous-job-stuck" } };
+        },
+      },
+      "asklake-continuous-job-stuck",
+      {
+        maxAttempts: 2,
+        pollIntervalMs: 1,
+        sleepFn: async () => undefined,
+      },
+    ),
+    /still exists after terminate/,
+  );
 });
 
 function captureEnvironment(names) {
