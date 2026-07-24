@@ -211,9 +211,7 @@ export default function TransformFunctionModal({ column, qualityRules = [], onAp
 
     return (
         <DialogShell
-            bodyClassName="!p-0"
-            bodyScrollArea
-            bodyScrollAreaType="always"
+            bodyClassName="!p-0" bodyScrollArea bodyScrollAreaType="always"
             closeLabel="닫기"
             contentClassName="grid-rows-[auto_minmax(0,1fr)_auto] rounded-lg"
             footer={(
