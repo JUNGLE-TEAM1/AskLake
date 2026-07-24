@@ -1,5 +1,9 @@
 # 배포 파이프라인 Phase 6 통합 후보 검증
 
+> **문서 상태 — 역사적 통합 검증 기록**
+>
+> 아래 branch, commit과 실행 결과는 당시 통합 후보에만 해당한다. 현재 배포 절차는 [Deployment Runbook](deployment-runbook.md)을 따른다.
+
 > Issue: [#955](https://github.com/JUNGLE-TEAM1/AskLake/issues/955)
 > Base: `origin/dev` at `c669b7da` (PR #934 포함)
 > Scope: Phase 0-5 산출물을 통합 후보 브랜치에서 결합하고 회귀를 확인한다. 이 기록은 `dev` 반영 또는 운영 배포 승인이 아니다.
@@ -34,7 +38,7 @@ python3 -m py_compile scripts/write-release-record.py scripts/write-deploy-diagn
 bash tests/deploy/deploy-scripts-regression.sh
 bash tests/deploy/deploy-readiness-regression.sh
 bash tests/deploy/deploy-diagnostic-regression.sh
-ASKLAKE_PYTHON_BIN=/Users/tail1/miniforge3/bin/python3.13 \
+ASKLAKE_PYTHON_BIN=/path/to/python3.13 \
   ASKLAKE_BACKEND_VENV_DIR=backend/.venv313 \
   bash scripts/verify-deploy-readiness.sh
 cd backend

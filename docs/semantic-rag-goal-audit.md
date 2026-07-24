@@ -1,5 +1,9 @@
 # Semantic/RAG v2 implementation audit
 
+> **Document status — Evidence**
+>
+> This audit is tied to the branch below. Use [API Contract](api-contract.md) and [Backend Integration Readiness](backend-integration-readiness.md) for the current contract and readiness boundary.
+
 Branch: `feature/rag-v2-goal-audit`
 
 ## Current pipeline

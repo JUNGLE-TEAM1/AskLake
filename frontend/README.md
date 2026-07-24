@@ -6,28 +6,38 @@ In local dev, `/api` is proxied to the FastAPI backend at `http://127.0.0.1:8080
 
 ## Run
 
-```powershell
+```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Vite prints the local URL after startup.
+브라우저에서 `http://127.0.0.1:5174`를 연다. 기본 개발 proxy는 `/api` 요청을 `http://127.0.0.1:8080`의 FastAPI로 전달한다.
 
-If FastAPI is not running at `http://127.0.0.1:8080`, set `VITE_DEV_PROXY_TARGET` to its origin. For frontend-only mock mode, set `VITE_USE_MOCK_API` to `"true"`; this does not mock AI results.
+FastAPI가 기본 주소에서 실행되지 않는다면 `VITE_DEV_PROXY_TARGET`에 backend origin을 지정한다.
 
-The Semantic/RAG workspace is available at `/catalog?view=semantic`. It uses the live Semantic Model and RAG endpoints while reusing the Catalog dataset list for selection and schema context.
+```bash
+VITE_DEV_PROXY_TARGET=http://127.0.0.1:18080 npm run dev
+```
+
+Frontend-only mock QA는 다음처럼 명시적으로 opt-in한다. 이 모드는 AI 결과를 mock하지 않으며 production build에서는 사용할 수 없다.
+
+```bash
+VITE_USE_MOCK_API=true npm run dev
+```
+
+Semantic Model 관리 화면은 `/catalog?view=semantic`에서 Catalog dataset 목록과 schema context를 재사용한다. 제거된 RAG Dataset API와 UI는 제공하지 않는다.
 
 ## Build
 
-```powershell
+```bash
 cd frontend
 npm run build
 ```
 
 ## Environment
 
-```powershell
+```bash
 VITE_API_BASE_URL=http://localhost:8080
 VITE_DEV_PROXY_TARGET=http://127.0.0.1:8080
 VITE_USE_MOCK_API=true # frontend-only mock QA only
@@ -39,8 +49,10 @@ VITE_USE_MOCK_API=true # frontend-only mock QA only
 
 ```text
 frontend/src/
+  state/
+    asklake/               # live API state, mutations, route hydration
   hooks/
-    useAskLakeData.ts      # jobs, datasets, draft, SQL result state
+    useAskLakeData.ts      # compatibility facade over state/asklake
     useAuditLogs.ts        # audit log, toast, recent API panel state
   services/
     apiClient.ts           # backend fetch client

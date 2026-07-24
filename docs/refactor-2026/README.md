@@ -1,5 +1,9 @@
 # AskLake 단계적 리팩토링 원장
 
+> **문서 상태 — Historical**
+>
+> 2026-07-16 감사 이후 순차 PR의 기준선과 진행 기록이다. 현재 기준 문서는 [문서 포털](../README.md)에서 찾고, runtime 규칙은 필요한 개별 `contracts/` 문서를 직접 확인한다.
+
 이 디렉터리는 2026-07-16 배포 코드 감사 이후 진행하는 15개 순차 PR의 기준선과 handoff를 보관한다. 감사 커밋은 비교점일 뿐 checkout 대상이 아니며, 실제 작업은 각 PR 생성 시점의 최신 `dev`를 기준으로 한다.
 
 ## 읽는 순서
@@ -10,7 +14,7 @@
 4. [decision-log.md](./decision-log.md): 범위·호환성·머지 방식 결정
 5. [baseline/current-code-metrics.md](./baseline/current-code-metrics.md): 정량 기준선
 6. [baseline/current-contracts.md](./baseline/current-contracts.md): API·DB·runtime·frontend 계약 기준선
-7. [baseline/test-command-map.md](./baseline/test-command-map.md): 검증 명령과 실행 조건
+7. [baseline/test-command-map.md](./baseline/test-command-map.md): 2026-07-16 기준선 명령과 당시 실행 결과
 8. [baseline/pre-existing-failures.md](./baseline/pre-existing-failures.md): 변경 전 실패 목록
 9. [operations/spark-runtime-reboot-recovery.md](./operations/spark-runtime-reboot-recovery.md): Spark 경로 재부팅 복구·검증·rollback
 10. [contracts/runtime-state-ownership.md](./contracts/runtime-state-ownership.md): Continuous desired/observed/public 상태와 오류·fencing 계약

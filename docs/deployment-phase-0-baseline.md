@@ -1,5 +1,9 @@
 # 배포 파이프라인 Phase 0 기준선
 
+> **문서 상태 — Evidence**
+>
+> 아래 commit 시점의 배포 흐름과 실패 조건을 기록한다. 현재 운영 경계는 [System Guardrails](system-guardrails.md), [Architecture](02-architecture.md), [EC2 Compose Runbook](deployment-runbook.md)을 따른다.
+
 > Issue: [#945](https://github.com/JUNGLE-TEAM1/AskLake/issues/945)
 > Base: `dev` at `8b980bea28dd7d49e044c93c457f2c471ab79e96`
 > Scope: 현재 배포 흐름과 실패 조건을 기록한다. 이 문서는 배포 스크립트, CI, runtime 동작을 변경하지 않는다.

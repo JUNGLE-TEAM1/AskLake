@@ -1,19 +1,18 @@
 # AskLake Backend
 
-이 폴더는 기존 Node 기반 검증 스크립트와 새 FastAPI 전환 scaffold를 함께 둔다.
-Node demo API는 아직 제거하지 않으며, FastAPI 전환 작업은 `app/` 아래에서 진행한다.
+이 폴더는 기본 FastAPI application과 PostgreSQL 기반 metadata 경계, Node 기반 compatibility adapter·검증 script를 함께 둔다. 기본 runtime entry는 `app.main:app`이며 `src/server.mjs`는 현재 public backend가 아니다.
 
 ## FastAPI 실행
 
-FastAPI backend는 Python 3.13 환경에서 검증한다. production Docker image도
-`python:3.13-slim`과 `backend/requirements.txt`를 기준으로 빌드한다.
+로컬은 Python 3.10 이상을 사용하고 CI는 3.12·3.13을 검증한다. Production Docker image는 `python:3.13-slim`과 `backend/requirements.txt`를 기준으로 빌드한다.
 
 ```bash
 cd backend
-python3.13 -m venv .venv
+npm ci
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8080
+python -m pip install -r requirements.txt
+npm run dev
 ```
 
 환경 변수는 `.env.example`을 참고한다. Backend는 OpenAI에 직접 연결하지 않고
@@ -33,7 +32,7 @@ Pair2 Catalog / Lineage / SQL FastAPI smoke:
 docker compose up -d postgres
 
 cd backend
-python3.13 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
@@ -68,13 +67,13 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 
 Production 환경의 TLS/ACL/materializer/result bucket은 `npm run verify:trino-production-readiness`로 확인한다. `scripts/deploy.sh`는 Trino가 enabled일 때 같은 검증을 자동 실행한다.
 
-Node demo API 전체 검증은 MinIO 샘플 fixture가 필요하다.
+Node compatibility API 전체 검증은 MinIO 샘플 fixture가 필요하다. 현재 public FastAPI 전체 gate로 해석하지 않는다.
 
 ```bash
 docker compose up -d minio postgres
 
 cd backend
-npm install
+npm ci
 npm run minio:seed-verify
 npm run verify
 ```
@@ -92,4 +91,4 @@ npm run verify:fastapi-pair2
 
 ## 설계 결정
 
-FastAPI 폴더 구조, SQLAlchemy session 방식, migration 전략, Pair별 작업 경계는 `../docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
+현재 backend 구조, 상태 소유권과 API 계약은 `../docs/02-architecture.md`, `../docs/03-api-reference.md`, `../docs/api-contract.md`를 기준으로 한다. `../docs/backend-fastapi-transition-plan.md`는 초기 전환 기록이다.

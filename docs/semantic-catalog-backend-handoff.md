@@ -1,5 +1,9 @@
 # Catalog 업무 모델 백엔드 인계 문서
 
+> **문서 상태 — Historical**
+>
+> 특정 임시 branch와 commit을 전제로 한 handoff다. 현재 제품 범위와 API는 [Product Planning](01-product-planning.md), [API Reference](03-api-reference.md), [API Contract](api-contract.md)를 따른다.
+
 ## 1. 이 브랜치의 목적
 
 이 브랜치는 Catalog 안에서 `데이터 카탈로그`와 `업무 모델 보기`를 전환하는 프론트 목업을 보존하고, 다음 담당 AI가 백엔드 구현을 시작할 수 있도록 역할과 계약을 정리한 임시 인계 브랜치다.

@@ -1,5 +1,9 @@
 # AskLake 현재 데이터·이벤트 흐름
 
+> **문서 상태 — Evidence**
+>
+> 이 문서는 STACK-01 조사와 이후 Dashboard 수동 갱신 전환을 기록한 시점 자료다. 현재 구조의 기준은 [Architecture](../02-architecture.md), [Realtime Event V1](contracts/realtime-event-v1.md), [Continuous SQL V1](contracts/continuous-sql-v1.md), [Production Runbook](production-runbook.md)을 따른다.
+
 기준 커밋은 2026-07-16 최신 origin/dev의 b93ae273이며, 이 문서는 STACK-01 조사 결과다. 2026-07-21 Dashboard 수동 모드 전환으로 frontend 자동 polling/SSE 소비 경로는 제거되었고, 아래 backend event 흐름은 호환·운영 기반으로만 남는다.
 
 ## 현재 Dashboard 갱신 흐름

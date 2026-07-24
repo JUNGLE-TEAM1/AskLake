@@ -1,5 +1,9 @@
 # Transform & Quality UI 옵션 결정 문서
 
+> **문서 상태 — Historical**
+>
+> 초기 Wizard UI 선택 기록이다. 현재 Transform·Quality 범위와 실행 계약은 [Product Planning](01-product-planning.md), [API Contract](api-contract.md), [Transform·Quality 통합 문서](transform-quality-unification-plan.md)를 따른다.
+
 ## 목적
 
 이 문서는 ETL 생성 Wizard의 `Transform & Quality Check` 화면을 어떤 UX 모델로 만들지 결정하기 위한 문서다.

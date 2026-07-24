@@ -1,5 +1,9 @@
 # AskLake AWS 배포 파이프라인 마일스톤
 
+> **문서 상태 — 역사적 초기 배포 계획**
+>
+> 이 문서는 초기 EC2 단일 노드 배포 단계와 당시 branch 정책을 보존한다. 현재 구조와 운영 절차는 [Architecture](02-architecture.md), [System Guardrails](system-guardrails.md), [Deployment Runbook](deployment-runbook.md)을 따른다.
+
 이 문서는 Codex와 작업자가 AWS 배포 파이프라인을 구현할 때 참고할 상세 작업 기준이다.
 사람용 요약은 `docs/deployment-overview.md`를 기준으로 한다.
 

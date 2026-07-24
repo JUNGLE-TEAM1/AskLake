@@ -225,4 +225,4 @@ Disabled-mode rollback은 다음 순서다.
 
 ## 누적 PR03~09 구현 상태
 
-누적 branch에는 raw receipt/live probe, dimension, materializer, Catalog/event publication, Dashboard/SSE/frontend cache와 `0018_realtime_archive_recovery`가 포함된다. Local integration과 실제 container E2E는 통과했지만 10만 건/72시간, multi-node failover와 backup/restore를 대신하지 않는다. 최신 검증 명령과 No-Go 조건은 [개발 가이드](04-development-guide.md#pr09-archiverecovery와-최종-release-gate), [readiness](backend-integration-readiness.md#clickhouse-realtime-serving-v2-readiness), [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
+누적 branch에는 raw receipt/live probe, dimension, materializer, Catalog/event publication, Dashboard/SSE/frontend cache와 `0018_realtime_archive_recovery`가 포함된다. Local integration과 실제 container E2E는 통과했지만 10만 건/72시간, multi-node failover와 backup/restore를 대신하지 않는다. 최신 검증 명령과 No-Go 조건은 [개발 가이드](04-development-guide.md), [Backend 준비 상태](backend-integration-readiness.md), [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.

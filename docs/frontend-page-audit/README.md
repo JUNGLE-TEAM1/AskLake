@@ -1,5 +1,9 @@
 # Frontend Page UI Audit
 
+> **문서 상태 — Historical**
+>
+> 과거 UI 감사와 page별 refactor 계획을 보존한다. 현재 branch·routing·component 기준은 [Development Guide](../04-development-guide.md), [Frontend README](../../frontend/README.md), 현재 코드를 따른다.
+
 이 폴더는 AskLake 프론트엔드 UI 폴리싱을 위한 페이지별 감사 기록을 모읍니다.
 
 목표는 전체 페이지를 먼저 훑으면서 반복되는 UI 문제와 공통 컴포넌트 교체 후보를 찾고, 그 기록을 기준으로 페이지별 리팩토링과 폴리싱을 순차적으로 완료하는 것입니다. 페이지별 PR은 작게 유지하되, 구현 중 반복 패턴이 확인되면 해당 시점에 공통 컴포넌트로 승격하고 관련 페이지 문서를 함께 갱신합니다.

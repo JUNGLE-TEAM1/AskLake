@@ -1,5 +1,9 @@
 # Dashboard Runtime API 구현 기록
 
+> **문서 상태 — Evidence**
+>
+> 구현 당시 commit과 검증 결과를 보존한다. 현재 endpoint와 response 계약은 [API Reference](03-api-reference.md)와 [API Contract](api-contract.md)를 따른다.
+
 ## 1. 작업 목적
 
 Pair3 Dashboard Runtime API를 FastAPI backend에 구현했다.

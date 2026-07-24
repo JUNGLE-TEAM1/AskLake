@@ -1,5 +1,9 @@
 # 08 PairA 2번 Day2 Run History 작업 가이드
 
+> **문서 상태 — 역사적 작업 기록 (2026-07)**
+>
+> 당시 담당자 작업 가이드를 보존한다. 현재 Run 계약은 [API Contract](../api-contract.md)를 따른다.
+
 ## 목적
 
 Day2 작업자 2의 범위를 Run History 기준으로 고정한다.

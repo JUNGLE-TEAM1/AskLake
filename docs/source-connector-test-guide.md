@@ -1,6 +1,6 @@
 # Source Connector Developer Test Guide
 
-Pair A Source/Schema 화면은 일반 connector에 mock 값이나 로컬 endpoint를 기본 입력으로 넣지 않는다. 단, MongoDB demo connector는 비정형 데이터 시연을 위해 backend 환경변수의 기본 연결값을 사용하고 화면에는 `Database Name`과 collection selector만 노출한다.
+수집·처리 Wizard의 Source·Schema 단계는 일반 connector에 mock 값이나 로컬 endpoint를 기본 입력으로 넣지 않는다. 단, MongoDB demo connector는 비정형 데이터 시연을 위해 backend 환경변수의 기본 연결값을 사용하고 화면에는 `Database Name`과 collection selector만 노출한다.
 
 ## 원칙
 
@@ -23,9 +23,12 @@ Smoke 결과를 “통과”로 표시하려면 위 명령이 성공해야 한�
 
 ## 1. 로컬 소스 fixture 준비
 
-```powershell
-cd "F:\ai\nmm week2\asklake"
-$env:ASKLAKE_WITH_KAFKA = "true"
+저장소 root에서 `backend`로 이동해 fixture를 준비한다. MinIO와 Kafka는 명시적으로 opt-in한다.
+
+```bash
+cd backend
+ASKLAKE_WITH_SOURCE_MINIO=true \
+ASKLAKE_WITH_KAFKA=true \
 npm run sources:fixtures
 ```
 
@@ -41,31 +44,27 @@ npm run sources:fixtures
 
 REST fixture server는 별도 터미널에서 켠다.
 
-```powershell
-cd "F:\ai\nmm week2\asklake\backend"
+```bash
+cd backend
 npm run sources:rest-fixture
 ```
 
 ## 2. FastAPI backend 실행
 
-```powershell
-cd "F:\ai\nmm week2\asklake\backend"
-$env:PYTHONPATH = (Get-Location).Path
-$env:MINIO_ENDPOINT = "http://127.0.0.1:19000"
-$env:MINIO_ACCESS_KEY = "m3admin"
-$env:MINIO_SECRET_KEY = "wishuponastar"
-uvicorn app.main:app --reload --port 8080
+```bash
+cd backend
+source .venv/bin/activate
+MINIO_ENDPOINT=http://127.0.0.1:19000 npm run dev
 ```
 
 ## 3. Frontend 실행
 
-```powershell
-cd "F:\ai\nmm week2\asklake\frontend"
-$env:VITE_API_BASE_URL = "http://localhost:8080"
-npm run dev -- --host 127.0.0.1 --port 5173
+```bash
+cd frontend
+npm run dev
 ```
 
-브라우저에서 `http://127.0.0.1:5173`에 접속한 뒤 `수집/처리 > 새 수집/처리 생성 > 소스 연결`로 들어간다.
+브라우저에서 `http://127.0.0.1:5174`에 접속한 뒤 `수집/처리 > 새 수집/처리 생성 > 소스 연결`로 들어간다. Vite는 기본적으로 `/api`를 `http://127.0.0.1:8080`으로 proxy한다.
 
 ## 4. 화면 입력값
 
@@ -91,24 +90,26 @@ npm run dev -- --host 127.0.0.1 --port 5173
 | JSONL | `asklake-fixtures/jsonl/events.jsonl` |
 | TSV | `asklake-fixtures/tsv/events.tsv` |
 | TXT | `asklake-fixtures/txt/events.txt` |
-| Parquet | `asklake-fixtures/parquet/events.parquet` |
+| Parquet | 탐색 결과의 `asklake-fixtures/parquet/<file>.parquet` |
+
+Parquet fixture는 `backend/tmp/` 아래에 기존 Parquet 파일이 있을 때만 함께 업로드된다. 탐색 결과에 Parquet object가 없으면 임의 경로를 입력하지 않고 다른 format을 사용하거나 관련 Spark 하네스에서 fixture를 먼저 만든다.
 
 ### MongoDB
 
 | Field | Value |
 | --- | --- |
 | Database Name | `asklake_sources` |
-| DATASET OR TABLE SELECTOR | `customer_reviews` 또는 `app_events` |
+| DATASET OR TABLE SELECTOR | `app_events` |
 
-로컬 backend를 compose 밖에서 직접 실행한다면 아래 환경변수를 설정한다. 배포 compose에서는 `deploy/docker-compose.prod.yml`이 같은 값을 backend container에 자동 주입한다.
+로컬 backend를 Compose 밖에서 직접 실행한다면 아래 환경변수를 설정한다. 이 값은 fixture 전용이며 Production MongoDB host·port·credential과 같다고 가정하지 않는다.
 
-```powershell
-$env:ASKLAKE_MONGO_HOST = "127.0.0.1"
-$env:ASKLAKE_MONGO_PORT = "27018"
-$env:ASKLAKE_MONGO_DATABASE = "asklake_sources"
+```bash
+export ASKLAKE_MONGO_HOST=127.0.0.1
+export ASKLAKE_MONGO_PORT=27018
+export ASKLAKE_MONGO_DATABASE=asklake_sources
 ```
 
-연결 테스트 후 컬렉션 목록에서 `customer_reviews` 또는 `app_events`를 선택한다. 컬렉션 선택 뒤 문서 샘플과 Field Tree를 확인한다.
+연결 테스트 후 컬렉션 목록에서 `app_events`를 선택한다. 컬렉션 선택 뒤 문서 샘플과 Field Tree를 확인한다.
 
 ### REST API
 
@@ -169,10 +170,10 @@ $env:ASKLAKE_MONGO_DATABASE = "asklake_sources"
 
 Amazon review replay/ingest 병렬 개발은 별도 topic `reviews.raw`를 사용한다. 실제 replay가 없어도 아래 producer로 같은 schema의 fixture 메시지를 넣을 수 있다.
 
-```powershell
+```bash
 cd backend
-$env:ASKLAKE_WITH_KAFKA = "true"
-$env:ASKLAKE_RECREATE_KAFKA = "true"
+export ASKLAKE_WITH_KAFKA=true
+export ASKLAKE_RECREATE_KAFKA=true
 npm run sources:fixtures
 npm run kafka:reviews-fixture
 ```
@@ -200,7 +201,7 @@ Review fixture message key는 `event_id`, message value는 JSON이다. B ingest 
 
 topic 유입을 직접 확인하려면 Redpanda container 안의 `rpk`를 사용한다.
 
-```powershell
+```bash
 docker exec -it asklake-redpanda-source rpk topic consume reviews.raw --brokers 127.0.0.1:9092 --num 5
 ```
 
@@ -208,19 +209,20 @@ docker exec -it asklake-redpanda-source rpk topic consume reviews.raw --brokers 
 
 Node connector smoke:
 
-```powershell
-cd "F:\ai\nmm week2\asklake\backend"
-$env:ASKLAKE_VERIFY_KAFKA = "true"
-$env:MINIO_ENDPOINT = "http://127.0.0.1:19000"
+```bash
+cd backend
+ASKLAKE_VERIFY_KAFKA=true \
+MINIO_ENDPOINT=http://127.0.0.1:19000 \
 npm run verify:sources
 ```
 
 FastAPI bridge smoke:
 
-```powershell
-cd "F:\ai\nmm week2\asklake\backend"
-$env:ASKLAKE_FASTAPI_PYTHON = "C:\Users\LWJ\AppData\Local\Programs\Python\Python311\python.exe"
-$env:ASKLAKE_VERIFY_KAFKA = "true"
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python \
+ASKLAKE_VERIFY_KAFKA=true \
+MINIO_ENDPOINT=http://127.0.0.1:19000 \
 npm run verify:fastapi-sources
 ```
 

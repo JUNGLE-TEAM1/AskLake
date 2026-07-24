@@ -1,5 +1,9 @@
 # ClickHouse Kafka JOIN 대시보드 검증 보고서
 
+> **문서 상태 — Evidence**
+>
+> 특정 local redeploy에서 얻은 검증 결과다. 현재 runtime 계약은 [Continuous SQL V1](realtime-2026/contracts/continuous-sql-v1.md)을 따르며, 이 기록만으로 Production 배포 완료를 판단하지 않는다.
+
 이 문서는 [작업 계획](clickhouse-dashboard-join-plan.md)에 적은 ClickHouse 경로를 실제로 구현하고 검증한 결과다.
 
 연결 이슈는 [#895](https://github.com/JUNGLE-TEAM1/AskLake/issues/895)다.
