@@ -864,9 +864,11 @@ V1 범위가 아니다. 계산식, fallback, 상한과 검증 순서는
 
 Production EKS의 FastAPI와 Trino result collector는
 `STARTUP_SCHEMA_MANAGEMENT_ENABLED=false`로 실행한다. Helm pre-install/pre-upgrade
-migration Job이 Alembic과 metadata bootstrap을 먼저 완료하며, 실제 column type이 다른
-경우에만 제한된 `lock_timeout` 안에서 DDL을 수행한다. API request와 worker hot path는
-schema DDL을 실행하지 않는다. Auth, Audit, Permission, Governance, Catalog, SQL,
+migration Job이 명시적 metadata bootstrap과 기존 Alembic revision을 순서대로 완료하며,
+실제 column type이 다른 경우에만 제한된 `lock_timeout` 안에서 DDL을 수행한다. 기존
+Alembic 일부가 compatibility 부모 테이블의 선행 생성을 전제로 하므로 bootstrap을 먼저
+실행한다. API request와 worker hot path는 schema DDL을 실행하지 않는다. Auth, Audit,
+Permission, Governance, Catalog, SQL,
 Dashboard, Realtime, Continuous SQL, Semantic compatibility schema helper도 공통 guard를
 통과해야 하며, PostgreSQL DDL은 명시적인 metadata bootstrap 문맥 밖에서 거절된다.
 로컬 SQLite fixture의 자동 준비만 개발 편의를 위해 유지한다. PostgreSQL 연결에는 bounded

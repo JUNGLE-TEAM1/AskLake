@@ -61,9 +61,10 @@ npm run verify:dashboard-storage
 `migrate:dashboard-schema`는 Dashboard 전용 versioned migration만 실행한다.
 `migrate:metadata-schema`는 backend traffic 전 Auth, Audit, Permission, Governance,
 Dashboard, ETL, Catalog, SQL, Continuous/Realtime, Semantic supporting table을 함께
-준비하는 단일 compatibility bootstrap이다. EKS Helm Job은 기존 Alembic revision을 먼저
-적용하고 이 bootstrap을 이어서 실행한다. API/worker startup과 request hot path는 이
-DDL을 소유하지 않는다. `20260718_dashboard_batch_cache_v1`은
+준비하는 단일 compatibility bootstrap이다. 기존 Alembic revision 일부는 이 bootstrap이
+소유한 부모 테이블이 먼저 존재하는 계약이므로 EKS Helm Job과 EC2 배포는 명시적
+metadata bootstrap을 먼저 완료하고 Alembic head를 적용한다. API/worker startup과
+request hot path는 이 DDL을 소유하지 않는다. `20260718_dashboard_batch_cache_v1`은
 `dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
 
 Catalog Dataset 전체 삭제를 변경할 때는 `catalog_dataset_deletions` receipt/fence가 metadata bootstrap에서 준비되는지, impact blocker가 삭제 요청 시 다시 계산되는지, 물리 purge 실패 때 Catalog row가 남는지 확인한다. 로컬 최소 검증은 `cd backend && PYTHONPATH=. .venv/bin/python -m unittest tests.test_catalog_dataset_deletion -v`와 `cd frontend && npm run verify:ui-regressions && npm run build`다. 목록 row 삭제 action은 상세 route를 열지 않아야 하며 `succeeded` 전에는 frontend 목록에서 optimistic removal을 하지 않는다.

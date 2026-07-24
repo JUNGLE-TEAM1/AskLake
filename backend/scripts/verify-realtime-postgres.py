@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import psycopg
 from psycopg import sql
-from sqlalchemy import delete
+from sqlalchemy import delete, inspect
 
 from app.core.config import settings
 from app.core.database import SessionLocal
@@ -41,7 +41,10 @@ def main() -> None:
     dsn = psycopg_dsn(settings.database_url)
 
     with SessionLocal() as setup_db:
-        RealtimeEventRepository(setup_db, ensure_schema=True)
+        if "realtime_event_log" not in inspect(setup_db.get_bind()).get_table_names():
+            raise RuntimeError(
+                "Run the explicit metadata migration owner before realtime PostgreSQL verification."
+            )
 
     try:
         with psycopg.connect(dsn, autocommit=True) as listener:

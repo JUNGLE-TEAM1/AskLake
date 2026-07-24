@@ -736,7 +736,7 @@ Phase 3은 추가로 `tests.test_sql_execution_tree_locking`, `tests.test_etl_jo
   `idle_in_transaction_session_timeout`으로 방치 transaction을 제한한다.
 - [x] metadata bootstrap은 실제 type drift가 있을 때만 DDL을 실행하며 lock wait는 제한된다.
 - [x] EKS FastAPI/collector는 runtime schema management를 끄고 Helm migration Job이
-  Alembic과 metadata bootstrap을 rollout 전에 단독 실행한다.
+  metadata bootstrap과 기존 Alembic revision을 그 순서로 rollout 전에 단독 실행한다.
 - [x] Auth/Audit/Permission/Governance/Catalog/SQL/Dashboard/Realtime/Continuous
   SQL/Semantic schema helper는 공통 guard를 사용하며 PostgreSQL의 명시적 migration
   runner 밖에서는 DDL을 거절한다.

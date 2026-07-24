@@ -13,13 +13,10 @@ from app.models.dashboard_live import (
     DatasetKafkaPartitionCursorModel,
     DatasetRevisionCommitModel,
 )
-from app.repositories.catalog_repository import ensure_catalog_schema
 from app.repositories.dashboard_live_repository import (
     DashboardLiveRepository,
-    ensure_dashboard_live_schema,
     save_catalog_dataset_and_revision,
 )
-from app.repositories.realtime_event_repository import ensure_realtime_event_schema
 
 
 def main() -> None:
@@ -34,9 +31,6 @@ def main() -> None:
     run_id = f"continuous:verify:{suffix}:batch:1"
     widget_id = f"verify_widget_{suffix}"
     with SessionLocal() as db:
-        ensure_catalog_schema(db)
-        ensure_dashboard_live_schema(db)
-        ensure_realtime_event_schema(db)
         try:
             dataset = CatalogDatasetModel(
                 id=dataset_id,

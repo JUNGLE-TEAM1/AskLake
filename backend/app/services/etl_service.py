@@ -2066,10 +2066,8 @@ kafka_snapshot_source_boundary = bind_runtime(_etl_snapshot_operations.IMPLEMENT
 kafka_materialization_for_snapshot = bind_runtime(_etl_snapshot_operations.IMPLEMENTATIONS['kafka_materialization_for_snapshot'], globals(), runtime_names=_etl_snapshot_operations.RUNTIME_NAMES)
 kafka_offset_policy = bind_runtime(_etl_snapshot_operations.IMPLEMENTATIONS['kafka_offset_policy'], globals(), runtime_names=_etl_snapshot_operations.RUNTIME_NAMES)
 parse_kafka_target_path = bind_runtime(_etl_snapshot_operations.IMPLEMENTATIONS['parse_kafka_target_path'], globals(), runtime_names=_etl_snapshot_operations.RUNTIME_NAMES)
-prepare_spark_job = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['prepare_spark_job'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
-run_prepared_spark_job = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['run_prepared_spark_job'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
-run_spark_job = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['run_spark_job'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
-ensure_batch_iceberg_target = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['ensure_batch_iceberg_target'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
+for _airflow_runtime_name in ('prepare_spark_job', 'run_prepared_spark_job', 'run_spark_job', 'ensure_batch_iceberg_target'):
+    globals()[_airflow_runtime_name] = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS[_airflow_runtime_name], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 sync_active_airflow_snapshot_runs = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['sync_active_airflow_snapshot_runs'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 execute_airflow_spark_run = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['execute_airflow_spark_run'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 airflow_spark_execution_hooks = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['airflow_spark_execution_hooks'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)

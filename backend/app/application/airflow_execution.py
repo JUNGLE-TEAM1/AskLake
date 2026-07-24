@@ -62,6 +62,49 @@ def execute_airflow_spark_run(
     command: str,
     hooks: AirflowSparkExecutionHooks,
 ) -> dict[str, Any]:
+    attempt_id, existing_result = _claim_airflow_spark_execution(
+        db,
+        job_id=job_id,
+        run_id=run_id,
+        hooks=hooks,
+    )
+    if existing_result is not None:
+        return existing_result
+    assert attempt_id is not None
+
+    prepared_job = _prepare_airflow_spark_execution(
+        db,
+        job_id=job_id,
+        run_id=run_id,
+        command=command,
+        attempt_id=attempt_id,
+        hooks=hooks,
+    )
+    manifest = _run_airflow_spark_execution(
+        db,
+        job_id=job_id,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        prepared_job=prepared_job,
+        hooks=hooks,
+    )
+    return _commit_airflow_spark_result(
+        db,
+        job_id=job_id,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        manifest=manifest,
+        hooks=hooks,
+    )
+
+
+def _claim_airflow_spark_execution(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    hooks: AirflowSparkExecutionHooks,
+) -> tuple[str | None, dict[str, Any] | None]:
     job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -78,7 +121,7 @@ def execute_airflow_spark_run(
     existing_result = (run.task_states or {}).get("sparkResult")
     if isinstance(existing_result, dict) and existing_result.get("status") == "success":
         db.rollback()
-        return existing_result
+        return None, existing_result
 
     execution = (run.task_states or {}).get("sparkExecution")
     if hooks.spark_execution_lease_is_active(execution):
@@ -101,7 +144,18 @@ def execute_airflow_spark_run(
         },
     }
     db.commit()
+    return attempt_id, None
 
+
+def _prepare_airflow_spark_execution(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    command: str,
+    attempt_id: str,
+    hooks: AirflowSparkExecutionHooks,
+) -> Any:
     try:
         job = etl_repository.get_job(db, job_id)
         if job is None:
@@ -126,7 +180,18 @@ def execute_airflow_spark_run(
             hooks=hooks,
         )
         raise
+    return prepared_job
 
+
+def _run_airflow_spark_execution(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    attempt_id: str,
+    prepared_job: Any,
+    hooks: AirflowSparkExecutionHooks,
+) -> dict[str, Any]:
     try:
         # The external runner deliberately receives no Session or ORM model.
         # Everything it needs was copied into ``prepared_job`` above.
@@ -143,7 +208,18 @@ def execute_airflow_spark_run(
             hooks=hooks,
         )
         raise
+    return manifest
 
+
+def _commit_airflow_spark_result(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    attempt_id: str,
+    manifest: dict[str, Any],
+    hooks: AirflowSparkExecutionHooks,
+) -> dict[str, Any]:
     job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
         db.rollback()
