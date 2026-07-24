@@ -124,13 +124,6 @@
   line-height: 1.5;
 }
 
-.asklake-dashboard-widget-grid {
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 16px;
-  align-items: stretch;
-}
-
 .asklake-dashboard-rgl-shell {
   min-height: 100%;
   width: 100%;

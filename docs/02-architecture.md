@@ -88,6 +88,7 @@ flowchart TB
 - Airflow의 terminal `success`만으로 데이터 처리를 성공 처리하지 않는다. 같은 `runId`의 실제 Spark output metadata와 Catalog materialization이 모두 저장되어야 Run이 `success`가 된다.
 - 실행 흐름/DAG는 별도 top-level 화면이 아니라 Run History에서 선택한 `runId`의 단계 흐름으로 표시한다.
 - Dashboard card/list와 draft/published runtime API는 FastAPI 응답만 source of truth로 사용한다. Catalog 기반 runtime widget은 `sampleRows` snapshot 대신 성공한 물리 materialization을 DuckDB로 제한 집계하거나 최대 500행 preview로 읽는다.
+- Dashboard draft와 published 화면은 같은 `react-grid-layout` canvas와 저장된 12-column `x`, `y`, `w`, `h`를 사용한다. published 화면은 drag/resize를 비활성화하되 별도 CSS grid로 좌표를 재해석하지 않는다.
 
 ### 검증된 물리 결과만 Catalog에 공개
 

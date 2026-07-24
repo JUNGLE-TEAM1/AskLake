@@ -16,6 +16,10 @@ const dashboardCanvasSource = readFileSync(
   new URL("../src/pages/dashboard/runtime/DashboardCanvas.tsx", import.meta.url),
   "utf8",
 );
+const dashboardRuntimeViewSource = readFileSync(
+  new URL("../src/pages/dashboard/runtime/DashboardRuntimeView.tsx", import.meta.url),
+  "utf8",
+);
 
 function metricWidget(id: string, x: number, y: number): DashboardRuntimeWidget {
   return {
@@ -117,4 +121,13 @@ test("the draft editor keeps the canonical 12-column breakpoint while published 
     /const editorBreakpoint(?:: DashboardBreakpoint \| undefined)? = editable \? "lg" : undefined/,
   );
   assert.match(dashboardCanvasSource, /breakpoint=\{editorBreakpoint\}/);
+});
+
+test("published dashboards use the same persisted layout canvas as the draft editor", () => {
+  assert.match(
+    dashboardRuntimeViewSource,
+    /<DashboardCanvas\s+editable=\{false\}\s+widgets=\{selectedPublishedWidgets\}/,
+  );
+  assert.doesNotMatch(dashboardRuntimeViewSource, /PublishedDashboardWidgetGrid/);
+  assert.doesNotMatch(dashboardRuntimeViewSource, /asklake-dashboard-widget-grid/);
 });

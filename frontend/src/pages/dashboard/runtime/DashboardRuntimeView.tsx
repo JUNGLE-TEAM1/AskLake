@@ -16,7 +16,6 @@ import { DashboardRuntimeShell } from "./DashboardRuntimeShell";
 import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
-import { WidgetFrame } from "./WidgetFrame";
 import type { DashboardAssistantPromptInsertion } from "./DashboardAssistantPanel";
 import type {
   CreateDraftWidgetFormInput,
@@ -141,22 +140,6 @@ const emptyDashboardCopy = {
   description: "편집 모드에서 페이지와 위젯을 구성한 뒤 게시하면 이 화면에서 확인할 수 있습니다.",
   title: "게시된 위젯이 없습니다",
 };
-
-function PublishedDashboardWidgetGrid({
-  onRetryData,
-  widgets,
-}: {
-  onRetryData: (widgetId: string) => void;
-  widgets: DashboardRuntimeWidget[];
-}) {
-  return (
-    <div className="asklake-dashboard-widget-grid" aria-label="Published dashboard widgets">
-      {widgets.map((widget) => (
-        <WidgetFrame key={widget.id} widget={widget} onRetryData={onRetryData} />
-      ))}
-    </div>
-  );
-}
 
 function RuntimeActionButton({
   onClick,
@@ -505,7 +488,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       <EmptyDashboardCanvas action={openDraftAction} editable={false} {...emptyDashboardCopy} />
     </div>
   ) : (
-    <PublishedDashboardWidgetGrid widgets={selectedPublishedWidgets} onRetryData={onRetryWidgetData} />
+    <DashboardCanvas editable={false} widgets={selectedPublishedWidgets} onRetryWidgetData={onRetryWidgetData} />
   );
 
   const canShowEditToolbar = isDraftMode && Boolean(draftRuntime?.revision) && !draftLoading && !draftError;
