@@ -456,7 +456,7 @@
 .asklake-apex-widget .apexcharts-legend {
   gap: 8px;
   max-width: 100%;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .asklake-circular-chart-widget {

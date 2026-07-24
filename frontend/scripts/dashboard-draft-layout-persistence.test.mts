@@ -20,6 +20,14 @@ const dashboardRuntimeViewSource = readFileSync(
   new URL("../src/pages/dashboard/runtime/DashboardRuntimeView.tsx", import.meta.url),
   "utf8",
 );
+const widgetRendererSource = readFileSync(
+  new URL("../src/pages/dashboard/runtime/WidgetRenderer.tsx", import.meta.url),
+  "utf8",
+);
+const observedChartSizeSource = readFileSync(
+  new URL("../src/pages/dashboard/runtime/useObservedChartSize.ts", import.meta.url),
+  "utf8",
+);
 
 function metricWidget(id: string, x: number, y: number): DashboardRuntimeWidget {
   return {
@@ -130,4 +138,17 @@ test("published dashboards use the same persisted layout canvas as the draft edi
   );
   assert.doesNotMatch(dashboardRuntimeViewSource, /PublishedDashboardWidgetGrid/);
   assert.doesNotMatch(dashboardRuntimeViewSource, /asklake-dashboard-widget-grid/);
+});
+
+test("Apex charts follow their widget content box after save changes the canvas width", () => {
+  assert.match(widgetRendererSource, /useObservedChartSize\(chartContainerRef\)/);
+  assert.match(observedChartSizeSource, /new ResizeObserver\(\(\[entry\]\) =>/);
+  assert.match(observedChartSizeSource, /entry\.contentRect\.height/);
+  assert.match(observedChartSizeSource, /entry\.contentRect\.width/);
+  assert.match(widgetRendererSource, /height=\{chartSize\?\.height \?\? "100%"\}/);
+  assert.match(widgetRendererSource, /width=\{chartSize\?\.width \?\? "100%"\}/);
+});
+
+test("Cartesian charts do not reserve a scrollable legend below the plot", () => {
+  assert.match(widgetRendererSource, /function buildBaseChartOptions[\s\S]*?legend: \{\s+show: false,/);
 });

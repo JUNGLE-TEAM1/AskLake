@@ -39,11 +39,8 @@ import {
 import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 import { resolveChartValueAxisRange } from "./chartAxisRange";
-import {
-  buildBarChartAxes, buildBarChartTooltip,
-  formatChartAxisNumber,
-  formatChartCategoryAxisLabel,
-} from "./barChartAxes";
+import { buildBarChartAxes, buildBarChartTooltip, formatChartAxisNumber, formatChartCategoryAxisLabel } from "./barChartAxes";
+import { useObservedChartSize } from "./useObservedChartSize";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -486,6 +483,7 @@ function buildBaseChartOptions(color: string): ApexOptions {
       strokeDashArray: 4,
     },
     legend: {
+      show: false,
       fontSize: "13px",
       fontWeight: 700,
       labels: {
@@ -723,6 +721,7 @@ function RuntimeApexChart({
   widget: DashboardRuntimeWidget;
 }) {
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const chartSize = useObservedChartSize(chartContainerRef);
   const chartOptions = withColorSlotSelection(options, widget, onSelectColorSlot);
   const handleClickCapture = (event: MouseEvent<HTMLDivElement>) => {
     if (!onSelectColorSlot) return;
@@ -758,7 +757,7 @@ function RuntimeApexChart({
 
   return (
     <div className="asklake-apex-widget" ref={chartContainerRef} onClickCapture={handleClickCapture}>
-      <Chart height="100%" options={chartOptions} series={series} type={type} width="100%" />
+      <Chart height={chartSize?.height ?? "100%"} options={chartOptions} series={series} type={type} width={chartSize?.width ?? "100%"} />
     </div>
   );
 }
