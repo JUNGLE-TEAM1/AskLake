@@ -431,7 +431,7 @@ function colorSlotIndexFromChartSelection(widget: DashboardRuntimeWidget, select
 
   if (widget.type === "bar_chart") {
     if (widget.config.groupKey) return seriesIndex;
-    return dataPointIndex === null ? seriesIndex : 0;
+    return dataPointIndex ?? seriesIndex;
   }
 
   if (widget.type === "line_chart" || widget.type === "area_chart") {
@@ -1137,8 +1137,18 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     plotOptions: {
       bar: {
         borderRadius: 5,
+        distributed: !widget.config.groupKey,
         horizontal: isHorizontal,
         columnWidth: "48%",
+      },
+    },
+    tooltip: {
+      ...baseOptions.tooltip,
+      x: {
+        ...baseOptions.tooltip?.x,
+        formatter: (value, formatterOptions) => (
+          chartData.categories[formatterOptions?.dataPointIndex ?? -1] ?? String(value)
+        ),
       },
     },
     xaxis: axes.xaxis,

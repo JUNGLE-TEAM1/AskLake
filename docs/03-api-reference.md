@@ -277,6 +277,8 @@ Query AI는 선택한 Dataset ID를 기준으로 권한·governance와 read-only
 | `POST` | `/api/datasets/freshness/query` | Current | Session | 최대 100개 Dataset freshness 묶음 조회 |
 | `POST` | `/api/dashboards/assistant` | Current | Session | 검증된 Dashboard action과 근거 생성 |
 
+`DashboardWidgetColorConfig.colors`는 차트 요소의 안정된 표시 순서를 따른다. `bar_chart`는 `groupKey`가 있으면 시리즈 순서, 없으면 backend 집계 결과의 `xKey` 카테고리 순서에 색상을 적용한다. ungrouped 막대의 tooltip은 축약된 축 라벨이 아니라 원본 카테고리 문자열을 표시한다. 색이 부족하면 frontend 기본 팔레트로 보완한다.
+
 현재 Dashboard frontend는 페이지 진입과 사용자의 새로고침에서 widget query를 실행한다. 자동 freshness polling이나 SSE 구독은 시작하지 않는다. API가 존재한다는 이유만으로 자동 갱신이 활성화됐다고 설명하면 안 된다.
 
 ### 4.9 Realtime·Continuous SQL
