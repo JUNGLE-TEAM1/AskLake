@@ -6,7 +6,7 @@ AskLake는 기업 안팎에 흩어진 데이터를 수집·처리·저장하고,
 
 ## 시연 영상
 
-[![AskLake 시연 영상 썸네일](https://img.youtube.com/vi/LC8-Sm4BhDI/hqdefault.jpg)](https://youtu.be/LC8-Sm4BhDI)
+[![AskLake 시연 영상 썸네일](docs/assets/asklake-demo-thumbnail.png)](https://youtu.be/LC8-Sm4BhDI)
 
 ## 목차
 
