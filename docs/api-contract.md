@@ -1849,6 +1849,15 @@ Response 예시:
 
 `run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `spark_process_write` task는 `POST /api/internal/airflow/spark-runs/{runId}/execute`를 호출해 실제 input/output row count, Iceberg 논리 table URI와 commit evidence를 Run의 `sparkResult`에 저장한다. 다음 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출해 Trino table/snapshot/data-file mapping을 검증하고 Catalog dataset/materialization을 transaction으로 확정한다. Backend reconciliation loop가 active Run을 기본 5초마다 Airflow와 동기화해 DB에 저장하고, 프론트는 `GET /api/etl/jobs/statuses` 한 요청으로 최종 `scheduled` 또는 `failed` 상태와 최신 Run·DAG 단계를 반영한다.
 
+`POST /api/internal/airflow/spark-runs/{runId}/execute`의 DB 경계는 다음 순서를
+강제한다. 먼저 Job/Run row lock으로 실행 lease와 `attemptId`를 저장한다. 다음
+transaction에서 source window와 Spark payload를 DB/ORM과 분리된 값으로 준비한 뒤
+commit한다. 외부 SparkApplication 제출·polling·완료 대기에는 DB `Session`을 전달하지
+않는다. 완료 또는 실패 후 새 transaction을 열어 저장된 `attemptId`가 여전히 같은
+경우에만 `sparkResult` 또는 실패 상태를 기록한다. 따라서 외부 실행 대기 시간은 DB
+connection 보유 시간에 포함되지 않으며, lease가 교체된 오래된 실행 결과는
+`409 INVALID_JOB_STATE`로 거절한다.
+
 분리된 내부 endpoint는 bearer token과 backend의 `AIRFLOW_EXECUTION_API_TOKEN`을 우선 사용하며 `AIRFLOW_INTERNAL_TOKEN`을 호환 fallback으로 허용한다. `POST /api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute`와 `X-AskLake-Airflow-Token`은 기존 단일 호출 Spark/Catalog 경로 호환용으로 유지한다. 동일 `runId`가 이미 Catalog에 materialize된 경우 기존 결과를 반환하고 Spark를 중복 실행하지 않는다. Dataset 삭제 receipt는 receipt 이전에 생성된 Run의 늦은 Catalog publication만 막고, receipt 뒤 새로 생성된 Run은 같은 producer Job의 새 materialization으로 Catalog를 다시 만들 수 있다. Airflow DAG가 `success`여도 해당 `runId`의 성공 Catalog evidence 또는 기존 persisted Spark result가 없으면 Run을 `failed`로 보정한다. `dag_run.conf`에는 `jobId`, `runId`, `command`, `executionMode`, 제출 시각만 전달하며 source credential과 전체 Job payload는 전달하지 않는다.
 
 현재 `pause`는 Spark checkpoint에서 정확히 이어받는 복원을 보장하지 않는다. 목록 UI는 실행 중단과 자동 실행 중지를 구분하며, 현재 Run만 끝내는 동작은 `cancelRun`, 이후 자동 실행까지 중지하는 동작은 `stopSchedule`을 사용한다.

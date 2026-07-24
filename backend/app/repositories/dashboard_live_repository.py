@@ -9,6 +9,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.models.base import Base
 from app.models.dashboard_live import (
     DashboardWidgetResultModel,
@@ -114,6 +115,8 @@ def recommended_dashboard_poll_ms(trigger_interval_seconds: Any) -> int:
 def ensure_dashboard_live_schema(db: Session) -> None:
     """Create the additive live-dashboard tables for new and existing databases."""
     bind = db.get_bind()
+    if not metadata_schema_mutation_allowed(db, "Dashboard live"):
+        return
     Base.metadata.create_all(
         bind=bind,
         tables=[

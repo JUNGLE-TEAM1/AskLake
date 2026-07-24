@@ -595,6 +595,8 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] timeout/start/process/protocol 오류 분류, bounded diagnostic, secret redaction
 - [x] Spark REST `UNKNOWN` 상태는 terminal last-known state가 있을 때만 새 Continuous worker attempt로 복구하고, non-terminal `UNKNOWN`은 duplicate start로 차단
 - [x] deployment/startup metadata schema bootstrap으로 ETL, Catalog, SQL request/control-plane hot path 이전에 DDL 준비
+- [x] Airflow Spark 외부 대기 전에 DB 입력을 detached payload로 복사하고 transaction을
+  종료하여 병렬 Run 대기 중 pool checked-out connection 0을 회귀 검증
 - [ ] live Spark/Kafka integration과 long-running soak는 opt-in 운영 환경에서 확인
 - [ ] connector·Spark/Kafka launcher compatibility의 Python 전환은 authority matrix 종료 조건 충족 후 별도 진행
 ## ETL Permission create-flow readiness
@@ -750,9 +752,14 @@ Phase 3은 추가로 `tests.test_sql_execution_tree_locking`, `tests.test_etl_jo
   `idle_in_transaction_session_timeout`으로 방치 transaction을 제한한다.
 - [x] metadata bootstrap은 실제 type drift가 있을 때만 DDL을 실행하며 lock wait는 제한된다.
 - [x] EKS FastAPI/collector는 runtime schema management를 끄고 Helm migration Job이
-  Alembic과 metadata bootstrap을 rollout 전에 단독 실행한다.
+  metadata bootstrap과 기존 Alembic revision을 그 순서로 rollout 전에 단독 실행한다.
+- [x] Auth/Audit/Permission/Governance/Catalog/SQL/Dashboard/Realtime/Continuous
+  SQL/Semantic schema helper는 공통 guard를 사용하며 PostgreSQL의 명시적 migration
+  runner 밖에서는 DDL을 거절한다.
+- [x] 서로 다른 Spark Run 8개가 외부 실행을 기다리는 동안 pool connection 0개 점유와
+  병렬 상태 조회 40건 성공을 로컬 QueuePool 회귀로 확인한다.
 - [ ] dev EKS rollout 후 실제 로그인, ALB health, idle-in-transaction 0,
-  relation-lock wait 0을 live evidence로 확인한다.
+  relation-lock wait 0, RDS `DatabaseConnections` 감소를 live evidence로 확인한다.
 
 ## Kafka Job engine routing readiness (#1073)
 

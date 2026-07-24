@@ -94,6 +94,12 @@ jobs:
           python -m pip install --disable-pip-version-check -r requirements.txt
           npm ci
 
+      - name: Prepare schema through the explicit migration owner
+        working-directory: backend
+        run: |
+          python -m app.migrations.run_metadata_schema
+          python -m alembic upgrade head
+
       - name: Verify deterministic realtime contracts
         working-directory: backend
         run: npm run verify:realtime-stack

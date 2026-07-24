@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.errors import ApiError
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.models.base import Base
 from app.models.identity import AuthSessionModel, AuthUserModel
 from app.repositories.governance_repository import blocked_principal_for_actor
@@ -28,6 +29,7 @@ DUMMY_PASSWORD_SALT = "asklake-dummy-auth-salt-v1"
 
 _login_failure_lock = Lock()
 _login_failures_by_key: dict[str, list[datetime]] = {}
+_schema_ready_bind_ids: set[int] = set()
 
 DEMO_AUTH_USERS = [
     {
@@ -192,7 +194,7 @@ class AuthService:
         return user_to_actor(user)
 
     def _ensure_tables(self) -> None:
-        Base.metadata.create_all(bind=self.db.get_bind(), tables=[AuthUserModel.__table__, AuthSessionModel.__table__])
+        ensure_auth_tables(self.db)
 
     def _ensure_demo_users(self, *, preserve_existing_status: bool = False) -> None:
         changed = False
@@ -270,6 +272,17 @@ def initialize_auth(db: Session) -> None:
     except Exception:
         db.rollback()
         raise
+
+
+def ensure_auth_tables(db: Session) -> None:
+    bind = db.get_bind()
+    bind_key = id(bind)
+    if bind_key in _schema_ready_bind_ids:
+        return
+    if not metadata_schema_mutation_allowed(db, "Auth"):
+        return
+    Base.metadata.create_all(bind=bind, tables=[AuthUserModel.__table__, AuthSessionModel.__table__])
+    _schema_ready_bind_ids.add(bind_key)
 
 
 def load_session_actor(db: Session, token: str | None) -> dict[str, Any] | None:

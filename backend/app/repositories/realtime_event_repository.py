@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.models.base import Base
 from app.models.realtime import RealtimeEventModel
 from app.schemas.realtime import RealtimeEventEnvelope
@@ -22,6 +23,8 @@ REALTIME_NOTIFY_CHANNEL = "asklake_realtime_events"
 
 def ensure_realtime_event_schema(db: Session) -> None:
     bind = db.get_bind()
+    if not metadata_schema_mutation_allowed(db, "Realtime event"):
+        return
     Base.metadata.create_all(bind=bind, tables=[RealtimeEventModel.__table__])
     if bind.dialect.name == "postgresql":
         for statement in (

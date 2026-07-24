@@ -5,6 +5,7 @@ from uuid import uuid4
 from sqlalchemy import String, and_, cast, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.domain.audit import (
     AUDIT_TARGET_TYPES,
     KNOWN_AUDIT_TARGET_TYPES,
@@ -18,10 +19,18 @@ from app.schemas.identity import AdminAuditLogEntry
 
 ALLOWED_AUDIT_RESULTS = {"success", "failed", "forbidden"}
 ALLOWED_AUDIT_TARGET_TYPES = AUDIT_TARGET_TYPES
+_schema_ready_bind_ids: set[int] = set()
 
 
 def ensure_audit_event_table(db: Session) -> None:
-    Base.metadata.create_all(bind=db.get_bind(), tables=[AuditEventModel.__table__])
+    bind = db.get_bind()
+    bind_key = id(bind)
+    if bind_key in _schema_ready_bind_ids:
+        return
+    if not metadata_schema_mutation_allowed(db, "Audit"):
+        return
+    Base.metadata.create_all(bind=bind, tables=[AuditEventModel.__table__])
+    _schema_ready_bind_ids.add(bind_key)
 
 
 def add_audit_event(

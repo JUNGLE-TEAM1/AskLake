@@ -47,6 +47,7 @@ RUNTIME_NAMES = {
     'dataset_sample_rows_from_request',
     'dataset_schema_from_request',
     'dict',
+    'ensure_auth_tables',
     'ensure_legacy_permission_grants',
     'ensure_scheduled_job_next_run',
     'etl_repository',
@@ -187,7 +188,7 @@ def get_permission_options(
                 grants=permission_grants_for_etl_job(db, job),
                 resource_label="job permissions",
             )
-    Base.metadata.create_all(bind=db.get_bind(), tables=[AuthUserModel.__table__])
+    ensure_auth_tables(db)
     stored_users = list(db.scalars(select(AuthUserModel).order_by(AuthUserModel.display_name.asc())).all())
     users = stored_users or [
         SimpleNamespace(

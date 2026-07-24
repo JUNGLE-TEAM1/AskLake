@@ -393,8 +393,8 @@ prepare_clickhouse_runtime() {
 
 bootstrap_metadata_schema() {
   remote_compose 'up -d --wait postgres'
-  remote_compose 'run --rm --no-deps --build backend python -m alembic upgrade head'
   remote_compose 'run --rm --no-deps --build backend python scripts/migrate-metadata-schema.py'
+  remote_compose 'run --rm --no-deps --build backend python -m alembic upgrade head'
 }
 
 prepare_clickhouse_v2_runtime() {

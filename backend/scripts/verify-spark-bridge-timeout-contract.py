@@ -39,7 +39,8 @@ try:
     etl_service.job_payload_for_spark = lambda _job, *_args, **_kwargs: {"id": "timeout-contract"}
     etl_service.run_node_bridge = capture_bridge
     kafka_job = SimpleNamespace(source_type="Apache Kafka", source_config=[])
-    etl_service.run_spark_job(object(), kafka_job, "run", "run-timeout-contract")
+    db = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
+    etl_service.run_spark_job(db, kafka_job, "run", "run-timeout-contract")
 
     assert captured["options"]["timeout_seconds"] == 61
     assert captured["options"]["timeout_seconds"] * 1000 > etl_service.spark_rest_poll_timeout_ms()

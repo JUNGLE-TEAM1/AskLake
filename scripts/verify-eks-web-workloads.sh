@@ -82,6 +82,14 @@ if [[ "$(grep -c 'name: STARTUP_SCHEMA_MANAGEMENT_ENABLED' "$RENDERED_FILE")" -n
   exit 1
 fi
 
+metadata_runner_line="$(awk '/python -m app\.migrations\.run_metadata_schema/ { print NR; exit }' "$RENDERED_FILE")"
+alembic_line="$(awk '/python -m alembic upgrade head/ { print NR; exit }' "$RENDERED_FILE")"
+if [[ -z "$metadata_runner_line" || -z "$alembic_line" ]] || \
+   (( metadata_runner_line >= alembic_line )); then
+  echo "metadata compatibility bootstrap must run before Alembic in the migration Job" >&2
+  exit 1
+fi
+
 helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
   --set backend.trinoRuntimeSecretName=asklake-backend-trino-runtime >"$RENDERED_FILE"
 grep -Fq 'name: asklake-backend-trino-runtime' "$RENDERED_FILE"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -38,6 +39,7 @@ def spark_hooks(
     runner: Mock,
     *,
     lease_active: bool = False,
+    preparer: Mock | None = None,
 ) -> AirflowSparkExecutionHooks:
     return AirflowSparkExecutionHooks(
         compact_storage_text=lambda value, **_kwargs: str(value),
@@ -46,7 +48,8 @@ def spark_hooks(
         format_rows=lambda value: f"{value} rows",
         iso_now=lambda: "2026-07-17T00:00:00Z",
         make_attempt_id=lambda run_id: f"attempt:{run_id}",
-        run_spark_job=runner,
+        prepare_spark_job=preparer or Mock(return_value={"detached": True}),
+        run_prepared_spark_job=runner,
         spark_error_summary=lambda result: str(result.get("error") or "spark failed"),
         spark_execution_lease_is_active=lambda _value: lease_active,
         spark_failed_stage=lambda result: str(result.get("failedStage") or "Spark"),
@@ -200,7 +203,7 @@ class AirflowSparkExecutionCommandTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "success")
-        self.assertEqual(db.commits, 2)
+        self.assertEqual(db.commits, 3)
         self.assertEqual(run.task_states["sparkExecution"]["attemptId"], "attempt:RUN-1")
         self.assertEqual(run.task_states["sparkExecution"]["ownerId"], "backend-process-1")
         self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
@@ -232,9 +235,77 @@ class AirflowSparkExecutionCommandTests(unittest.TestCase):
                 hooks=spark_hooks(runner),
             )
 
-        self.assertEqual(db.commits, 2)
+        self.assertEqual(db.commits, 3)
         self.assertEqual(run.task_states["sparkExecution"]["status"], "failed")
         self.assertEqual(run.task_states["sparkExecution"]["error"], "spark unavailable")
+        self.assertNotIn("sparkResult", run.task_states)
+
+    def test_runner_timeout_releases_preparation_transaction_and_marks_attempt_failed(self) -> None:
+        db = FakeSession()
+        job = SimpleNamespace(id="JOB-1", target_path=None)
+        run = SimpleNamespace(
+            airflow_dag_run_id="RUN-1",
+            job_id="JOB-1",
+            task_states={},
+        )
+
+        def timeout_after_release(_prepared: object) -> dict[str, object]:
+            self.assertEqual(db.commits, 2)
+            raise TimeoutError("spark wait timed out")
+
+        runner = Mock(side_effect=timeout_after_release)
+        with (
+            patch("app.application.airflow_execution.etl_repository.get_job_for_update", side_effect=[job, job]),
+            patch("app.application.airflow_execution.etl_repository.get_job", return_value=job),
+            patch("app.application.airflow_execution.etl_repository.get_run_model", side_effect=[run, run]),
+            patch("app.application.airflow_execution.etl_repository.refresh_run_for_update"),
+            self.assertRaisesRegex(TimeoutError, "spark wait timed out"),
+        ):
+            execute_airflow_spark_run(
+                db,
+                job_id="JOB-1",
+                run_id="RUN-1",
+                command="run",
+                hooks=spark_hooks(runner),
+            )
+
+        self.assertEqual(db.commits, 3)
+        self.assertEqual(db.rollbacks, 1)
+        self.assertEqual(run.task_states["sparkExecution"]["status"], "failed")
+        self.assertEqual(run.task_states["sparkExecution"]["error"], "spark wait timed out")
+        self.assertNotIn("sparkResult", run.task_states)
+
+    def test_invalid_spark_result_marks_only_the_owned_attempt_failed(self) -> None:
+        db = FakeSession()
+        job = SimpleNamespace(id="JOB-1", target_path=None)
+        run = SimpleNamespace(
+            airflow_dag_run_id="RUN-1",
+            job_id="JOB-1",
+            task_states={},
+        )
+        hooks = replace(
+            spark_hooks(Mock(return_value={"status": "success"})),
+            spark_result_manifest=Mock(side_effect=ValueError("invalid spark manifest")),
+        )
+
+        with (
+            patch("app.application.airflow_execution.etl_repository.get_job_for_update", side_effect=[job, job]),
+            patch("app.application.airflow_execution.etl_repository.get_job", return_value=job),
+            patch("app.application.airflow_execution.etl_repository.get_run_model", side_effect=[run, run]),
+            patch("app.application.airflow_execution.etl_repository.refresh_run_for_update"),
+            self.assertRaisesRegex(ValueError, "invalid spark manifest"),
+        ):
+            execute_airflow_spark_run(
+                db,
+                job_id="JOB-1",
+                run_id="RUN-1",
+                command="run",
+                hooks=hooks,
+            )
+
+        self.assertEqual(db.commits, 3)
+        self.assertEqual(run.task_states["sparkExecution"]["status"], "failed")
+        self.assertEqual(run.task_states["sparkExecution"]["error"], "invalid spark manifest")
         self.assertNotIn("sparkResult", run.task_states)
 
     def test_changed_execution_lease_rejects_stale_finalization(self) -> None:
@@ -272,8 +343,50 @@ class AirflowSparkExecutionCommandTests(unittest.TestCase):
 
         self.assertEqual(context.exception.code, ErrorCode.INVALID_JOB_STATE)
         self.assertEqual(context.exception.status_code, 409)
-        self.assertEqual(db.commits, 1)
+        self.assertEqual(db.commits, 2)
+        self.assertEqual(db.rollbacks, 1)
         self.assertNotIn("sparkResult", replacement_run.task_states)
+
+    def test_database_transaction_is_released_before_external_spark_wait(self) -> None:
+        db = FakeSession()
+        job = SimpleNamespace(id="JOB-1", target_path=None)
+        run = SimpleNamespace(
+            airflow_dag_run_id="RUN-1",
+            duration="-",
+            ended_at="-",
+            error_summary="-",
+            failed_stage="-",
+            input_rows="-",
+            job_id="JOB-1",
+            output_path="-",
+            output_rows="-",
+            task_states={},
+        )
+        prepared = {"detached": True}
+        preparer = Mock(return_value=prepared)
+
+        def assert_connection_released(value: object) -> dict[str, object]:
+            self.assertIs(value, prepared)
+            self.assertEqual(db.commits, 2)
+            return {"runId": "RUN-1", "status": "success"}
+
+        runner = Mock(side_effect=assert_connection_released)
+        with (
+            patch("app.application.airflow_execution.etl_repository.get_job_for_update", side_effect=[job, job]),
+            patch("app.application.airflow_execution.etl_repository.get_job", return_value=job),
+            patch("app.application.airflow_execution.etl_repository.get_run_model", side_effect=[run, run]),
+            patch("app.application.airflow_execution.etl_repository.refresh_run_for_update"),
+        ):
+            execute_airflow_spark_run(
+                db,
+                job_id="JOB-1",
+                run_id="RUN-1",
+                command="run",
+                hooks=spark_hooks(runner, preparer=preparer),
+            )
+
+        preparer.assert_called_once_with(db, job, "run", "RUN-1")
+        runner.assert_called_once_with(prepared)
 
 
 class AirflowCatalogReconciliationCommandTests(unittest.TestCase):

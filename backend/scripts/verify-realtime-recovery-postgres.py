@@ -71,7 +71,6 @@ def main() -> None:
         gate=approved_gate(),
     )
 
-    ensure_legacy_publication_tables()
     try:
         seed(
             dataset_id,
@@ -107,24 +106,6 @@ def main() -> None:
         print("verify-realtime-recovery-postgres: ok")
     finally:
         cleanup(dataset_id, pipeline_id, pipeline_version_id, report.report_id)
-
-
-def ensure_legacy_publication_tables() -> None:
-    """Create only the pre-V2 tables expected from the metadata bootstrap.
-
-    The verifier owns a disposable database and must also work before another
-    integration verifier has happened to initialize the legacy publication
-    schema. V2 tables remain Alembic-owned.
-    """
-    with SessionLocal() as session:
-        bind = session.get_bind()
-        for model in (
-            CatalogDatasetModel,
-            DatasetFreshnessModel,
-            DatasetRevisionCommitModel,
-            RealtimeEventModel,
-        ):
-            model.__table__.create(bind=bind, checkfirst=True)
 
 
 def evidence(role, dataset_id, pipeline_version_id, version_id, boundary, dimensions):

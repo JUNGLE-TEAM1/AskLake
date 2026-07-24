@@ -67,6 +67,7 @@ RUNTIME_NAMES = {
     'parse_count_value',
     'parse_incremental_timestamp',
     'parse_optional_integer',
+    'prepare_spark_job',
     're',
     'record_airflow_catalog_failure',
     'reconcile_active_airflow_runs',
@@ -78,6 +79,7 @@ RUNTIME_NAMES = {
     'run_from_airflow_submit',
     'run_from_spark_result',
     'run_node_bridge',
+    'run_prepared_spark_job',
     'run_spark_job',
     'secrets',
     'settings',
@@ -108,7 +110,13 @@ RUNTIME_NAMES = {
 }
 
 
-def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+def prepare_spark_job(
+    db: Session,
+    job: ETLJobModel,
+    command: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Copy every DB-dependent Spark input before releasing the transaction."""
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
     kubernetes_mode = str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "kubernetes"
@@ -132,10 +140,8 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
         if is_internal_data_lake_source(job.source_type)
         else None
     )
-    result = run_node_bridge(
-        "run-spark-job-once.mjs",
-        "ASKLAKE_SPARK_RUN_RESULT",
-        {
+    return {
+        "payload": {
             "command": command,
             "job": job_payload_for_spark(
                 job,
@@ -148,11 +154,35 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
             ),
             "runId": run_id,
         },
+        "restMode": rest_mode,
+        "sourceObjectInventory": source_object_inventory,
+        "sourceObjectKeys": source_object_keys,
+        "stateFile": state_file,
+        "timeoutSeconds": (
+            spark_python_bridge_timeout_seconds(poll_timeout_ms)
+            if (rest_mode or kubernetes_mode)
+            else 900
+        ),
+    }
+
+
+def run_prepared_spark_job(prepared_job: dict[str, Any]) -> dict[str, Any]:
+    """Wait for Spark using only detached data, never a DB Session or ORM row."""
+    result = run_node_bridge(
+        "run-spark-job-once.mjs",
+        "ASKLAKE_SPARK_RUN_RESULT",
+        prepared_job["payload"],
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if (rest_mode or kubernetes_mode) else 900,
-        timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
+        timeout_seconds=int(prepared_job["timeoutSeconds"]),
+        timeout_recovery=(
+            lambda: recover_spark_rest_submission(str(prepared_job["stateFile"]))
+        )
+        if prepared_job["restMode"]
+        else None,
     )
+    source_object_inventory = prepared_job["sourceObjectInventory"]
     if source_object_inventory is not None:
+        source_object_keys = prepared_job["sourceObjectKeys"]
         source_collection = result.get("sourceCollection")
         result["sourceCollection"] = {
             **(source_collection if isinstance(source_collection, dict) else {}),
@@ -160,6 +190,17 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
             "objectInventory": source_object_inventory,
         }
     return result
+
+
+def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+    """Compatibility façade that also releases its transaction before waiting."""
+    try:
+        prepared_job = prepare_spark_job(db, job, command, run_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return run_prepared_spark_job(prepared_job)
 
 
 def ensure_batch_iceberg_target(db: Session, job: ETLJobModel) -> None:
@@ -209,7 +250,8 @@ def airflow_spark_execution_hooks() -> AirflowSparkExecutionHooks:
             "spark-attempt",
             f"{run_id}:{iso_now()}:{secrets.token_hex(8)}",
         ),
-        run_spark_job=run_spark_job,
+        prepare_spark_job=prepare_spark_job,
+        run_prepared_spark_job=run_prepared_spark_job,
         spark_error_summary=spark_error_summary,
         spark_execution_lease_is_active=spark_execution_lease_is_active,
         spark_failed_stage=spark_failed_stage,
@@ -861,6 +903,8 @@ def sync_active_airflow_snapshot_runs() -> int:
 
 
 EXPORTED_FUNCTIONS = (
+    'prepare_spark_job',
+    'run_prepared_spark_job',
     'run_spark_job',
     'ensure_batch_iceberg_target',
     'sync_active_airflow_snapshot_runs',

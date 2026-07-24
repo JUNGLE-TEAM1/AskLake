@@ -5,6 +5,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.schema_management import metadata_schema_mutation_allowed
 from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.catalog_deletion import CatalogDatasetDeletionModel
@@ -15,10 +16,13 @@ _schema_ready_bind_ids: set[int] = set()
 
 
 def ensure_catalog_deletion_schema(db: Session) -> None:
-    bind_key = id(db.get_bind())
+    bind = db.get_bind()
+    bind_key = id(bind)
     if bind_key in _schema_ready_bind_ids:
         return
-    Base.metadata.create_all(bind=db.get_bind(), tables=[CatalogDatasetDeletionModel.__table__])
+    if not metadata_schema_mutation_allowed(db, "Catalog deletion"):
+        return
+    Base.metadata.create_all(bind=bind, tables=[CatalogDatasetDeletionModel.__table__])
     _schema_ready_bind_ids.add(bind_key)
 
 
