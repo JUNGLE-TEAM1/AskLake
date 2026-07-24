@@ -1,11 +1,11 @@
-export const DEFAULT_TARGET_DATASET = "30일 클릭 로그 데이터셋";
+export const DEFAULT_TARGET_DATASET = "과거 30일 클릭 로그 데이터셋";
 export const DEFAULT_TARGET_DESCRIPTION = "2026년 6월 클릭 로그";
 
 const LEGACY_DEFAULT_TARGET_DATASETS = new Set([
   "customer_review_gold",
   "pair_a_customer_review_gold",
   "구매전환율 데이터셋",
-  "과거 30일 클릭 로그 데이터셋",
+  "30일 클릭 로그 데이터셋",
 ]);
 const LEGACY_DEFAULT_TARGET_DESCRIPTIONS = new Set([
   "고객 리뷰 분석용 정제 데이터셋",

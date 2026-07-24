@@ -134,6 +134,7 @@ test("target defaults replace empty and legacy example values", () => {
   assert.equal(resolveDefaultTargetDataset("customer_review_gold"), DEFAULT_TARGET_DATASET);
   assert.equal(resolveDefaultTargetDataset("pair_a_customer_review_gold"), DEFAULT_TARGET_DATASET);
   assert.equal(resolveDefaultTargetDataset("구매전환율 데이터셋"), DEFAULT_TARGET_DATASET);
+  assert.equal(resolveDefaultTargetDataset("30일 클릭 로그 데이터셋"), DEFAULT_TARGET_DATASET);
   assert.equal(resolveDefaultTargetDataset("과거 30일 클릭 로그 데이터셋"), DEFAULT_TARGET_DATASET);
   assert.equal(resolveDefaultTargetDescription(""), DEFAULT_TARGET_DESCRIPTION);
   assert.equal(resolveDefaultTargetDescription("고객 리뷰 분석용 정제 데이터셋"), DEFAULT_TARGET_DESCRIPTION);
