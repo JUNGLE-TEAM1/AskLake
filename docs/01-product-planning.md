@@ -155,6 +155,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 10. 사용자가 File/S3 TXT, Kafka Snapshot 또는 Kafka Continuous raw text Job을 실행하면 runtime은 Preview와 같은 구조화 규칙을 전체 입력에 다시 적용한다.
 11. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
 12. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
+13. 사용자가 Job을 삭제해도 이미 게시된 Catalog Dataset과 물리 결과는 유지한다. 연결된 Dataset은 `자동 갱신 종료` 상태와 `다음 갱신: 예정 없음`으로 표시하며 Catalog, SQL 분석, Dashboard에서 계속 조회할 수 있다. Dataset 자체를 목록과 분석 선택지에서 제거하거나 물리 purge가 필요할 때만 별도 Catalog Dataset 삭제 흐름을 사용한다.
 
 ### Flow B. 카탈로그에서 SQL 분석
 

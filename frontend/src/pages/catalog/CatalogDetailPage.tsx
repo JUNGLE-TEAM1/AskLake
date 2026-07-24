@@ -99,6 +99,9 @@ export function DatasetStatusBadge({ dataset, shape = "default" }: { dataset: Ca
     <>
       {dataset.rag && <Badge shape={shape} size="sm">RAG</Badge>}
       <StatusBadge shape={shape} size="sm" tone={statusTone}>{statusMeta.label}</StatusBadge>
+      {dataset.runtimeStatus === "producer_deleted" && (
+        <StatusBadge shape={shape} size="sm" tone="warning">자동 갱신 종료</StatusBadge>
+      )}
     </>
   );
 }

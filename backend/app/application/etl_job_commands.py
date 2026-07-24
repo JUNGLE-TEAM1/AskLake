@@ -2,8 +2,9 @@
 
 The public ``etl_service`` functions remain compatibility façades. This module
 owns the delete sequence: authorize before inspecting workload evidence, reject
-active work, delete dependent rows, record the audit event, and commit or roll
-back the transaction.
+active work, retain published Dataset metadata with its refresh lifecycle ended,
+delete dependent rows, record the audit event, and commit or roll back the
+transaction.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from app.models import (
     ResourceLockModel,
 )
 from app.repositories import etl_repository
+from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.execution_tree_lock_repository import (
     lock_etl_job_row,
     require_standalone_job_unlocked,
@@ -523,6 +525,7 @@ def _persist_delete(
         ResourceLockModel.resource_type == "etl_job",
         ResourceLockModel.resource_id == job.id,
     ))
+    retained_dataset_ids = CatalogRepository(db).mark_producer_deleted(job.id)
     db.delete(job)
     hooks.add_audit_event(
         db,
@@ -530,7 +533,11 @@ def _persist_delete(
         action="etl_job.deleted",
         api_path=f"/api/etl/jobs/{requested_job_id}",
         http_method="DELETE",
-        metadata={"owner": job_owner},
+        metadata={
+            "owner": job_owner,
+            "retainedDatasetIds": retained_dataset_ids,
+            "retainedDatasetCount": len(retained_dataset_ids),
+        },
         result="success",
         status_code=status.HTTP_200_OK,
         target_id=requested_job_id,

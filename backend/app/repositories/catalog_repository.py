@@ -8,6 +8,8 @@ from app.core.permission_metadata import permission_grants_from_roles, resource_
 from app.models.catalog import CatalogDatasetModel
 
 _schema_ready_bind_ids: set[int] = set()
+PRODUCER_DELETED_RUNTIME_STATUS = "producer_deleted"
+PRODUCER_DELETED_NEXT_REFRESH = "예정 없음"
 
 
 class CatalogRepository:
@@ -89,6 +91,31 @@ class CatalogRepository:
         if commit:
             self.db.commit()
         return payload
+
+    def mark_producer_deleted(self, producer_job_id: str) -> list[str]:
+        """Keep published data queryable after its producing Job is deleted.
+
+        The ETL command owns the surrounding transaction. This method only
+        locks and marks the Catalog rows so source provenance and physical
+        bindings remain available while automatic refresh is explicitly ended.
+        """
+
+        ensure_catalog_schema(self.db)
+        result = self.db.execute(
+            select(CatalogDatasetModel)
+            .where(CatalogDatasetModel.producer_job_id == producer_job_id)
+            .order_by(CatalogDatasetModel.id.asc())
+            .with_for_update()
+        )
+        datasets = list(result.scalars().all())
+        for dataset in datasets:
+            payload = dict(dataset.payload or {})
+            payload["runtimeStatus"] = PRODUCER_DELETED_RUNTIME_STATUS
+            payload["nextRefresh"] = PRODUCER_DELETED_NEXT_REFRESH
+            dataset.payload = payload
+            dataset.runtime_status = PRODUCER_DELETED_RUNTIME_STATUS
+            dataset.next_refresh = PRODUCER_DELETED_NEXT_REFRESH
+        return [dataset.id for dataset in datasets]
 
     def _raise_if_deletion_in_progress(self, dataset_id: str) -> None:
         from app.core.errors import ApiError
@@ -185,6 +212,7 @@ def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
         "sourceKind": model.source_kind,
         "relationMode": model.relation_mode,
         "runtimeStatus": model.runtime_status,
+        "nextRefresh": model.next_refresh,
     }
     for key, value in authoritative_metadata.items():
         if value is not None:
