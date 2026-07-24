@@ -28,6 +28,10 @@ const observedChartSizeSource = readFileSync(
   new URL("../src/pages/dashboard/runtime/useObservedChartSize.ts", import.meta.url),
   "utf8",
 );
+const runtimeWidgetStyles = readFileSync(
+  new URL("../src/styles/dashboard-runtime-widgets.css", import.meta.url),
+  "utf8",
+);
 
 function metricWidget(id: string, x: number, y: number): DashboardRuntimeWidget {
   return {
@@ -147,6 +151,17 @@ test("Apex charts follow their widget content box after save changes the canvas 
   assert.match(observedChartSizeSource, /entry\.contentRect\.width/);
   assert.match(widgetRendererSource, /height=\{chartSize\?\.height \?\? "100%"\}/);
   assert.match(widgetRendererSource, /width=\{chartSize\?\.width \?\? "100%"\}/);
+});
+
+test("published widget frames and padded chart containers stay inside their grid item", () => {
+  assert.match(
+    runtimeWidgetStyles,
+    /\.asklake-widget-frame \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?min-height: 0;/,
+  );
+  assert.match(
+    runtimeWidgetStyles,
+    /\.asklake-apex-widget \{[\s\S]*?box-sizing: border-box;[\s\S]*?width: 100%;[\s\S]*?height: 100%;/,
+  );
 });
 
 test("Cartesian charts do not reserve a scrollable legend below the plot", () => {
