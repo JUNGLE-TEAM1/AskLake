@@ -1798,7 +1798,7 @@ PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
 
 ### ETL Job 삭제 command·transaction 경계 검증
 
-Job 삭제 권한, active workload 차단, 종속 레코드 또는 transaction을 변경할 때는 application command unit과 기존 row-lock·동시성 회귀를 함께 실행한다. `etl_service.delete_job` façade에 삭제 정책이나 commit/rollback을 다시 구현하지 않는다.
+Job 삭제 권한, active workload 차단, Continuous worker cleanup, 종속 레코드 또는 transaction을 변경할 때는 application command unit과 기존 row-lock·동시성 회귀를 함께 실행한다. Kubernetes Continuous cleanup 변경은 `node --test scripts/verify-kubernetes-continuous-contract.mjs`도 실행해 SparkApplication 부재 확인과 timeout fail-closed를 검증한다. `etl_service.delete_job` façade에 삭제 정책이나 commit/rollback을 다시 구현하지 않는다.
 
 ```bash
 cd backend

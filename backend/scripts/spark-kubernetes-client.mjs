@@ -13,6 +13,25 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+export async function waitForKubernetesWorkerDeletion(
+  client,
+  applicationName,
+  { maxAttempts = 50, pollIntervalMs = 200, sleepFn = sleep } = {},
+) {
+  const attempts = positiveInteger(maxAttempts, 50);
+  const interval = positiveInteger(pollIntervalMs, 200);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!await client.get(applicationName)) return;
+    if (attempt + 1 < attempts) await sleepFn(interval);
+  }
+  throw new Error(`SparkApplication ${applicationName} still exists after terminate.`);
+}
+
+function positiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function compactText(value, limit = 2_000) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   return text.length > limit ? text.slice(0, limit) : text;

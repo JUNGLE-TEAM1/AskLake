@@ -59,6 +59,10 @@ class EtlJobDeleteHooks:
     record_audit_event: Callable[..., object | None]
     require_governed_access: Callable[..., object | None]
     require_permission: Callable[..., object | None]
+    terminate_continuous_worker: Callable[
+        [ETLJobModel, KafkaContinuousRuntimeModel],
+        object,
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,7 +395,8 @@ def delete_job(
 
     actor_context = _authorize_delete(db, job, job_id, actor, hooks)
     require_standalone_job_unlocked(db, job.id, action="delete")
-    _require_idle_job(db, job, job_id, hooks)
+    runtime = _require_idle_job(db, job, job_id, hooks)
+    _terminate_idle_continuous_worker(db, job, runtime, hooks)
     _persist_delete(db, job, job_id, actor_context, hooks)
     return job_id
 
@@ -446,7 +451,7 @@ def _require_idle_job(
     job: ETLJobModel,
     requested_job_id: str,
     hooks: EtlJobDeleteHooks,
-) -> None:
+) -> KafkaContinuousRuntimeModel | None:
     active_runs = [
         run
         for run in etl_repository.list_run_models_for_job(db, job.id)
@@ -497,6 +502,25 @@ def _require_idle_job(
                 "maintenanceStatus": active_maintenance[0].status,
             },
         )
+    return runtime
+
+
+def _terminate_idle_continuous_worker(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel | None,
+    hooks: EtlJobDeleteHooks,
+) -> None:
+    if runtime is None:
+        return
+    try:
+        hooks.terminate_continuous_worker(job, runtime)
+    except Exception:
+        # Keep the Job and its runtime identity durable when external cleanup
+        # cannot be proven. A later retry can target the same deterministic
+        # worker instead of orphaning it after metadata deletion.
+        db.rollback()
+        raise
 
 
 def _persist_delete(

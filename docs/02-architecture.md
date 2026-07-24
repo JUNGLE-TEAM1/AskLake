@@ -807,7 +807,7 @@ Job 목록·상세·상태 조회는 `etl_job_queries` application module이 rep
 
 일반 Snapshot Run의 Airflow 동기화는 FastAPI lifespan에서 시작하는 backend reconciliation loop가 기본 5초마다 수행한다. PostgreSQL session advisory lock으로 배포 전체에서 한 process만 한 cycle을 소유하고, Job별 독립 transaction으로 실패를 격리한다. 이 loop가 저장한 상태를 모든 GET이 읽으므로 사용자가 Jobs 화면을 닫아도 실행 상태가 계속 최신화된다. Continuous runtime은 기존 별도 sync loop를 유지한다.
 
-Job 삭제는 `etl_job_commands` application module이 row lock 이후 governance·permission, active workload 보호, 종속 레코드와 audit를 포함한 단일 transaction을 소유한다. `etl_service.delete_job`은 기존 router signature와 hook 조립만 유지한다. 상세 계약은 [ETL Job 삭제 Command·Transaction 경계](refactor-2026/contracts/etl-job-command-boundary.md)를 따른다.
+Job 삭제는 `etl_job_commands` application module이 row lock 이후 governance·permission, active workload 보호, idle Continuous worker cleanup, 종속 레코드와 audit를 포함한 단일 transaction을 소유한다. Continuous runtime이 있으면 deterministic runner terminate를 먼저 수행하고, EKS에서는 SparkApplication 부재가 확인되지 않는 한 metadata를 삭제하지 않는다. `etl_service.delete_job`은 기존 router signature와 hook 조립만 유지한다. 상세 계약은 [ETL Job 삭제 Command·Transaction 경계](refactor-2026/contracts/etl-job-command-boundary.md)를 따른다.
 
 일반 Pipeline 생성·수정도 `etl_job_commands`가 Rule validation, persisted identity, mapper, permission과 repository write 순서를 소유한다. `etl_service.create_pipeline/update_pipeline`은 공개 signature와 production hook 조립만 유지하고 SQL Job 생성·실행·발행은 별도 경계로 남긴다. 상세 계약은 [ETL Pipeline 생성·수정 Write Application 경계](refactor-2026/contracts/etl-job-write-boundary.md)를 따른다.
 

@@ -1666,9 +1666,9 @@ Rules:
 
 ### 7.5.1 작업 삭제
 
-`DELETE /api/etl/jobs/{jobId}`는 Job 삭제 권한과 active Run/Continuous runtime 검증을 통과한 뒤 하나의 DB transaction으로 처리한다. `catalog_datasets.producer_job_id`가 삭제 Job ID와 일치하는 Dataset 등록은 Dataset permission grant와 resource lock metadata를 포함해 함께 제거한다. 따라서 해당 Job이 게시한 Dataset은 Catalog, SQL 분석의 Dataset 선택 목록, 다음 hydrate 결과에서 다시 나타나지 않는다.
+`DELETE /api/etl/jobs/{jobId}`는 Job 삭제 권한과 active Run/Continuous runtime 검증을 통과한 뒤 하나의 DB transaction으로 처리한다. idle Continuous runtime이 있으면 Job row lock을 유지한 채 deterministic worker `terminate`를 먼저 요청한다. Kubernetes Continuous runner는 연결된 Spark Operator `SparkApplication`이 실제로 없어질 때까지 bounded polling하며, timeout/API 오류에서는 transaction을 rollback해 Job, runtime과 cleanup identity를 보존한다. cleanup이 확인된 뒤 `catalog_datasets.producer_job_id`가 삭제 Job ID와 일치하는 Dataset 등록을 Dataset permission grant와 resource lock metadata를 포함해 함께 제거한다. 따라서 해당 Job이 게시한 Dataset은 Catalog, SQL 분석의 Dataset 선택 목록, 다음 hydrate 결과에서 다시 나타나지 않는다.
 
-이 cascade는 Catalog metadata만 제거한다. Iceberg/S3/ClickHouse의 물리 결과와 별도 Dataset deletion receipt는 Job 삭제로 정리하지 않는다. 물리 purge가 필요할 때만 이름 확인과 impact 검사를 거치는 `DELETE /api/catalog/datasets/{datasetId}?confirmName=...`를 사용한다. 다른 Job이 게시했거나 `producerJobId`가 없는 legacy Dataset은 추정으로 삭제하지 않는다.
+이 cascade는 Continuous 실행 resource와 Catalog metadata만 제거한다. Kafka topic, Iceberg/S3/ClickHouse의 물리 결과와 별도 Dataset deletion receipt는 Job 삭제로 정리하지 않는다. 물리 purge가 필요할 때만 이름 확인과 impact 검사를 거치는 `DELETE /api/catalog/datasets/{datasetId}?confirmName=...`를 사용한다. 다른 Job이 게시했거나 `producerJobId`가 없는 legacy Dataset은 추정으로 삭제하지 않는다.
 
 ### 7.6 작업 명령
 
