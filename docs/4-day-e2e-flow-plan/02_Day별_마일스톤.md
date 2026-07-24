@@ -1,5 +1,9 @@
 # 02 Day별 마일스톤
 
+> **문서 상태 — 역사적 작업 기록 (2026-07)**
+>
+> 실제 개발 일정이나 현재 milestone이 아니다. 현재 문서는 [AskLake 문서 포털](../README.md)에서 찾는다.
+
 ## DAY1-A-ETL-CREATE. 새 Job/Dataset 생성 연결
 
 | 항목 | 내용 |

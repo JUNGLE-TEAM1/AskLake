@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-AskLake is a React/Vite frontend plus local Node backend for a trusted data lake platform. The current Pair A person-1 slice covers Source, Schema, and Create with real backend calls.
+AskLake is a trusted data lake platform that connects data ingestion, processing, Catalog, SQL analysis, Dashboard, and AI-assisted workflows. The canonical application stack is a React/Vite/TypeScript frontend and a FastAPI backend backed by PostgreSQL. Airflow and Spark own finite-batch processing, Trino owns SQL Query Runs, and the active production control planes run in the EKS web/finite-batch and Realtime V1 cells. The EC2 Compose Continuous worker is a rollback standby and optional compatibility lane. The Node ESM server remains a compatibility and verification path, not the default backend runtime.
 
 Source of truth order:
 
@@ -30,7 +30,7 @@ Before writing code, Codex should:
 3. Check whether API/interface docs need to change before coding.
 4. Keep changes small and branch-scoped unless the task explicitly requests a vertical slice.
 5. Update docs when behavior, data contracts, commands, or conventions change.
-6. Keep `README.md` short and useful for first-time setup.
+6. Keep `README.md` short as the poster-session and project entry document. Put setup and validation details in `docs/04-development-guide.md`, and keep `docs/README.md` as the document portal.
 7. Track repository, CI, platform, and validation rules in `docs/system-guardrails.md`.
 
 ## GitHub Auth In Codex
@@ -56,12 +56,20 @@ When using GitHub CLI commands for this repository:
 - Frontend app: `frontend/`
 - Backend app: `backend/`
 - Frontend framework: React + Vite + TypeScript
-- Backend runtime: Node.js ESM HTTP server
-- Data state: React state hydrated from backend endpoints
-- Shell data: `frontend/src/data/appShellData.ts`
+- Default backend runtime: FastAPI at `backend/app/main.py`
+- Compatibility backend runtime: Node.js ESM at `backend/src/server.mjs`
+- Durable user-facing metadata: PostgreSQL for Job, Run, Catalog, Dashboard, permission, and audit state
+- Finite-batch runtime: Airflow orchestration plus Spark processing
+- SQL runtime: Trino Query Runs, with documented compatibility paths where enabled
+- Continuous runtime: EKS Realtime V1 worker owns Kafka Continuous and Continuous SQL reconciliation
+- EC2 compatibility runtime: Compose `continuous-worker` is rollback standby and may run only after an approved owner transfer
+- Deployment ownership manifest: `deploy/control-plane-ownership.json`
+- Frontend state modules: `frontend/src/state/asklake/`
+- Shell fixture data: `frontend/src/data/appShellData.ts`; do not treat it as durable state
 - API client: `frontend/src/services/apiClient.ts`
 - Pipeline API adapter: `frontend/src/services/pipelineApi.ts`
 - Source connector adapter: `frontend/src/services/sourceConnectorService.ts`
+- Document portal: `docs/README.md`
 - Detailed backend contract: `docs/api-contract.md`
 - Backend status checklist: `docs/backend-integration-readiness.md`
 
@@ -92,11 +100,11 @@ When extending AskLake, prefer this order:
 - Architecture, routing, state model, or data ownership changes must update `docs/02-architecture.md`.
 - Process, command, branch, or test changes must update `docs/04-development-guide.md`.
 - Repository, CI, PR, issue, deploy, or platform guardrail changes must update `docs/system-guardrails.md`.
-- `README.md` stays as the entry document and quick start, not a running log.
+- `README.md` stays as the poster-session and project entry document, not a setup manual or running log.
 
 ## Branch Naming
 
-`main` is protected. Do not push directly to `main`; open a PR from a task branch for every `main` change.
+`main` and `dev` are protected. Do not push directly to either branch. Start normal task branches from an up-to-date `dev` and merge through a PR. Release changes for `main` also use a task branch and PR.
 
 Recommended branch types:
 
@@ -106,20 +114,31 @@ Recommended branch types:
 - `test/<name>`
 - `chore/<name>`
 
+The issue-first workflow may use `<type>-#<issue-number>` when it matches the repository policy.
+
 ## Commands
 
-```powershell
-cd backend
-npm install
-npm run verify
-npm run sources:fixtures
-$env:ASKLAKE_VERIFY_KAFKA = "true"
-npm run verify:sources
+Prepare and run the representative local gates below. Choose additional commands from `docs/04-development-guide.md` for the changed runtime.
 
-cd ..\frontend
-npm install
+```bash
+cd backend
+npm ci
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+npm run verify:backward-compatibility
+npm run verify:control-plane-ownership
+
+cd ../frontend
+npm ci
+npm run verify:ui-regressions
 npm run build
+
+cd ..
+node scripts/verify-docs.mjs
 ```
+
+`npm run verify` starts the Node compatibility server and requires seeded MinIO fixtures. Use it only after following `docs/source-connector-test-guide.md`; it is not the default FastAPI gate.
 
 ## Definition Of Done
 

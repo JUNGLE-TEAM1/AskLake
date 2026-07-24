@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 63601)
-Total output lines: 2679
-
 # 04. Development Guide
 
 > Kafka revision 기반 SQL 자동 갱신은 API server가 아니라 `app.continuous_worker`에서 실행된다. 로컬 검증 시 Kafka continuous worker와 Trino collector를 함께 실행하고, CTAS 요청 전에 unfinalized SQL Run reservation이 commit되는지와 terminal SQL payload와 collector finalization 사이에도 `etl_jobs.continuous_config.revisionRefresh.processingRunId`가 유지되는지 확인한다. matching Run의 Catalog 공개·`finalized` marker·`publishedSourceRevision`이 한 transaction으로 확정된 뒤에만 processing claim이 비워지고 다음 worker cycle에서 후속 revision이 시작되어야 한다. Trino 제출 응답을 잃은 reservation은 자동 또는 수동 재실행을 허용하지 않는다.
@@ -10,6 +7,21 @@ Total output lines: 2679
 AI Gateway 로컬 실행과 backend/MCP 검증 명령은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 참고한다.
 
 이 문서는 AskLake 개발, 실행, 검증, 브랜치 작업 기준을 정리한다.
+
+## 빠른 길잡이
+
+이 문서는 현재 runtime별 명령과 검증 계약을 함께 보존하므로 길다. 처음부터 모두 읽기보다 작업 목적에 맞는 경로로 진입한다.
+
+| 목적 | 먼저 확인할 내용 | 상세 문서 |
+| --- | --- | --- |
+| 처음 실행 | 로컬 실행, 빌드, Backend Live Mode | [프로젝트 README](../README.md) |
+| API·상태 계약 변경 | Backend Live Mode와 API·DB 하위 호환 검증 | [API Reference](03-api-reference.md), [API Contract](api-contract.md) |
+| Airflow·Spark·Trino 검증 | Local Airflow + Spark runtime과 변경 영역별 명령 | [Backend Readiness](backend-integration-readiness.md) |
+| Realtime·Continuous 변경 | Realtime 개발 순서와 Continuous 검증 | [Realtime Production Runbook](realtime-2026/production-runbook.md) |
+| EKS·EC2 배포 | ownership 검증과 배포·복구 절차 | [Architecture](02-architecture.md), [Deployment Runbook](deployment-runbook.md) |
+| 문서 변경 | 문서 업데이트 기준과 정적 검사 | [문서 포털](README.md) |
+
+대표적인 빠른 시작만 필요하면 프로젝트 README를 먼저 보고, 이 문서에서는 관련 heading을 검색해 필요한 명령만 실행한다. 대용량·장애 주입·실제 AWS 검증은 별도 승인과 격리 환경 없이 실행하지 않는다.
 
 EKS와 EC2 배포는 모두 `dev`를 source branch로 사용하고 각 release는 실제 배포한 exact SHA를 receipt에 남긴다. 두 환경의 배포 시점이 다르면 SHA는 다를 수 있다. EC2는 Spark/Iceberg 기본값과 opt-in ClickHouse V2/Kafka Connect 프로필을 보존하고, EKS는 Realtime V1-only 프로필만 사용한다. 환경별 차이는 별도 브랜치가 아니라 profile/values로 관리하며, active Continuous owner는 항상 하나만 허용한다.
 
@@ -1758,7 +1770,7 @@ PYTHONPATH=. .venv/bin/python -m unittest tests.test_observability_contract test
 
 API/schema 변경은 `docs/03-api-reference.md` 또는 아키텍처 문서를, CI/deploy 변경은 이 문서 또는 `docs/system-guardrails.md`를 같은 PR에서 갱신해야 한다. baseline을 다시 생성해 실패를 덮지 말고 개선된 값은 별도 PR에서 낮춘다. `dev`, `main`, 기존 `pair1` 대상 PR은 같은 구조 ratchet을 실행한다. 여기서 `pair1`은 기존 branch의 품질 gate coverage이며 배포 source 허용을 뜻하지 않는다. 느린 production Spark·Continuous 검증은 `Refactor Quality Gates` workflow dispatch의 `release_suite=true`로 실행한다.
 
-브랜치 통합으로 기존 구조 부채가 dev baseline에 새로 유입되는 경우에도 baseline 재생성으로 통과시키지 않는다. 즉시 분할하기에 실행 위험이 큰 항목은 `quality-gate-baseline.json`의 예외에 정확한 path/function, 현재 줄 수 상한, owner, reason, expiresAt을 기록한다. 상한 증가와 만료는 다시 실패하며 wildcard나 파일군 단위 면제는 허용하지 않는다. 2026-07-18 pair1·dev 통합의 입력과 판정은 [통합 기록](pair1-dev-integration-2026-07-18.md)을 따른다. Issue #1139의 2026-07-22 `dev`/`pair1` 배포 소스 통합은 `origin/dev`에서 그대로 상속되거나 줄어든 target과 결합 트리에서만 커진 target을 분리해 확인하고, 필요한 정확한 현재 줄 수만 2026-08-31 만료 예외로 이동했다. `origin/pair1`의 기존 예외는 그대로 유지하며 전체 baseline 재수집이나 wildcard 예외는 사용하지 않았다.
+브랜치 통합으로 기존 구조 부채가 dev baseline에 새로 유입되는 경우에도 baseline 재생성으로 통과시키지 않는다. 즉시 분할하기에 실행 위험이 큰 항목은 `quality-gate-baseline.json`의 예외에 정확한 path/function, 현재 줄 수 상한, owner, reason, expiresAt을 기록한다. 상한 증가와 만료는 다시 실패하며 wildcard나 파일군 단위 면제는 허용하지 않는다. 2026-07-18 pair1·dev 통합의 결과와 후속 live 검증은 [Backend 준비 상태](backend-integration-readiness.md)와 [Day 18 Phase 7·8 결과](eks-day18-phase7-8-result.md)에 보존한다. Issue #1139의 2026-07-22 `dev`/`pair1` 배포 소스 통합은 `origin/dev`에서 그대로 상속되거나 줄어든 target과 결합 트리에서만 커진 target을 분리해 확인하고, 필요한 정확한 현재 줄 수만 2026-08-31 만료 예외로 이동했다. `origin/pair1`의 기존 예외는 그대로 유지하며 전체 baseline 재수집이나 wildcard 예외는 사용하지 않았다.
 
 ## 23) ETL E2E·복구 프로필 실행
 

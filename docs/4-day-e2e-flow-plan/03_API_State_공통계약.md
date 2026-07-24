@@ -1,5 +1,9 @@
 # 03 API State 공통계약
 
+> **문서 상태 — 역사적 초기 계약 (2026-07)**
+>
+> 현재 공개 API의 기준은 [API Reference](../03-api-reference.md)와 [API Contract](../api-contract.md)다. 아래 내용은 초기 Pair 간 상태 전달 규칙을 보존한다.
+
 ## 원칙
 
 - 성공 응답은 프론트 타입과 같은 shape를 쓴다.

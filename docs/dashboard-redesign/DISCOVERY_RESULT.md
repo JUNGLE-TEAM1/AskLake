@@ -1,5 +1,9 @@
 # Discovery Result
 
+> **Document status — Historical**
+>
+> This discovery snapshot predates the current React Router-based application. Use [Development Guide](../04-development-guide.md), [Architecture](../02-architecture.md), and the current `frontend/src/` code for present behavior.
+
 ## Framework
 
 - Frontend framework: React + Vite + TypeScript.

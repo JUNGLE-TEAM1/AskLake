@@ -1,17 +1,74 @@
-Warning: truncated output (original token count: 48962)
-Total output lines: 918
-
 # 02. Architecture
 
-> 2026-07-20부터 RAG/OpenSearch/embedding worker는 제품 아키텍처에서 제거됐다. 아래의 과거 RAG 서술은 migration 및 이전 운영 기록을 위한 이력이며, 현재 runtime 경로가 아니다.
+> **문서 상태 — Canonical / 현재 아키텍처 기준**
+>
+> 이 문서는 AskLake의 시스템 구성, 상태 소유권, 데이터 흐름과 런타임 경계를 설명한다. `목표`, `전환`, `도입 gate`로 표시된 내용은 현재 구현과 구분해 읽는다.
+>
+> 2026-07-20부터 RAG/OpenSearch/embedding worker는 제품 아키텍처에서 제거됐다. 아래의 과거 RAG 서술은 migration 및 이전 운영 기록을 위한 이력이며 현재 runtime 경로가 아니다.
 
 AI Gateway/MCP 경계와 파일별 변경 계획은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 따른다. 공개 Query AI route는 FastAPI가 소유하고, Gateway는 내부 Compose network에서만 접근한다.
 
-이 문서는 AskLake의 현재 frontend baseline, FastAPI 전환 경계, 그리고 Pair별 backend ownership을 함께 기록한다.
+## 한눈에 보기
 
-## 1) Current Pair A Live Boundary
+AskLake는 Frontend가 FastAPI를 통해 Job을 만들고, Airflow·Spark가 데이터를 처리한 뒤 검증된 결과만 Catalog·SQL·Dashboard에 공개하는 데이터 플랫폼이다.
 
-현재 Pair A 브랜치의 기준 경계는 다음과 같다.
+- 사용자-facing metadata의 source of truth는 PostgreSQL이다.
+- 유한 배치 ETL은 Airflow·Spark, SQL Query Run은 Trino가 담당한다.
+- 현재 canonical 배포 소유권은 EKS web·finite batch cell과 EKS Realtime V1 worker cell에 있다. EC2 Compose Continuous worker는 rollback standby다.
+- 브라우저는 데이터 저장소나 AI provider를 직접 호출하지 않고 FastAPI의 권한·거버넌스 경계를 거친다.
+- 테스트 fixture와 mock은 개발·검증 경계에만 존재하며 운영 성공 결과를 대신하지 않는다.
+
+```mermaid
+flowchart LR
+  User["사용자"] --> FE["React Frontend"]
+  FE --> API["FastAPI"]
+  Source["외부 Source\nFile/S3 · DB · Kafka · REST"] --> API
+  API --> Meta[("PostgreSQL\nJob · Run · Catalog · 권한")]
+  API --> Batch["Airflow · Spark\n유한 배치 처리"]
+  Batch --> Lake[("S3 / MinIO / Iceberg")]
+  API --> Query["Trino\nSQL Query Run"]
+  Query --> Lake
+  API --> Gateway["Private AI Gateway"]
+  Gateway --> Provider["AI Provider"]
+```
+
+```mermaid
+flowchart TB
+  subgraph EKS["EKS production cells"]
+    subgraph Web["web · finite batch"]
+      FE2["React Frontend"]
+      API2["FastAPI"]
+      Airflow["Airflow"]
+      Spark["Spark batch"]
+      FE2 --> API2 --> Airflow --> Spark
+    end
+    subgraph Realtime["Realtime V1"]
+      Worker["Continuous Worker"]
+      Streaming["Spark Structured Streaming"]
+      Worker --> Streaming
+    end
+  end
+
+  subgraph EC2["EC2 Compose compatibility lane"]
+    Standby["Continuous Worker\nrollback standby"]
+    Optional["opt-in ClickHouse serving"]
+    Standby -. approved owner transfer .-> Optional
+  end
+
+  DB[("PostgreSQL")]
+  Storage[("S3 / Iceberg")]
+  API2 <--> DB
+  Spark --> Storage
+  Worker <--> DB
+  Streaming --> Storage
+  Standby -. inactive by default .-> DB
+```
+
+문서를 처음 읽는 경우 1~4절에서 현재 구현과 전체 런타임을 파악한 뒤, 5~13절에서 Frontend·Run·API·Dashboard 경계를 확인한다. EKS, Realtime, 리팩터링과 운영 세부 계약은 14절 이후에서 다룬다.
+
+## 1) 현재 구현 경계
+
+현재 기준 경계는 다음과 같다.
 
 - Source, Schema, Create, Run은 기본적으로 같은 출처의 `/api`를 통해 live backend를 호출한다. `VITE_API_BASE_URL`은 다른 API origin이 필요한 경우에만 사용한다.
 - 생성 wizard는 Source 결과의 `requiresRecordParsing`에 따라 `Source -> Record Parsing -> Schema` 또는 `Source -> Schema`로 분기한다. `requiresRecordParsing`은 선택한 MinIO/S3 `.txt`/`.log` 또는 Kafka raw text 메시지가 이름 없는 `line_number + value` 샘플로 반환될 때 활성화한다.
@@ -32,7 +89,9 @@ AI Gateway/MCP 경계와 파일별 변경 계획은 [ai-gateway-mcp-rollout.md](
 - 실행 흐름/DAG는 별도 top-level 화면이 아니라 Run History에서 선택한 `runId`의 단계 흐름으로 표시한다.
 - Dashboard card/list와 draft/published runtime API는 FastAPI 응답만 source of truth로 사용한다. Catalog 기반 runtime widget은 `sampleRows` snapshot 대신 성공한 물리 materialization을 DuckDB로 제한 집계하거나 최대 500행 preview로 읽는다.
 
-### Catalog Dataset Deletion Ownership
+### 검증된 물리 결과만 Catalog에 공개
+
+Airflow의 terminal 상태만으로 데이터 처리를 성공 처리하지 않는다. 같은 `runId`의 Spark output·manifest와 물리 검증이 모두 충족된 경우에만 Catalog materialization을 생성하거나 갱신한다. 실패한 실행은 이전의 마지막 정상 mapping을 유지한다.
 
 ### Text Structuring Model Artifact Ownership
 
@@ -167,9 +226,9 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 일반 배치 Job의 `run`/`retry`는 `FastAPI -> Airflow DAG Run -> token-authenticated FastAPI internal execution API -> PySpark -> Iceberg JDBC catalog commit -> MinIO/S3 warehouse` 순서로 실행한다. warehouse의 실제 data file은 Parquet이고 Iceberg metadata/snapshot이 논리 테이블 상태를 결정한다. Airflow는 orchestration 상태의 source of truth이고 FastAPI/PostgreSQL은 Job 설정과 사용자-facing Run metadata의 source of truth다.
 
-Kafka Snapshot Job은 기본적으로 Airflow를 거치지 않고 `FastAPI -> durable offset snapshot -> fixed-range Kafka consume -> canonical transform/quality -> PySpark Iceberg append -> Trino physical verification -> AskLake Catalog -> Kafka offset commit` 순서로 실행한다. 단, EKS MVP 전용 topic/group 또는 내부 fixture receipt 필드가 있는 Snapshot Job은 별도 bounded fixture 실행 의도로 분류해 Airflow 경로로 보낸다. fixture 의도가 감지됐는데 exact topic/group, batch ID, expected count, IAM 9098 또는 Kubernetes runner 계약이 맞지 않으면 기존 Kafka 경로로 fallback하지 않고 command를 거부한다. 이 예외는 기존 Kafka Snapshot의 offset/commit 순서와 EC2 소유 Continuous 경로를 변경하지 않는다.
+Kafka Snapshot Job은 기본적으로 Airflow를 거치지 않고 `FastAPI -> durable offset snapshot -> fixed-range Kafka consume -> canonical transform/quality -> PySpark Iceberg append -> Trino physical verification -> AskLake Catalog -> Kafka offset commit` 순서로 실행한다. 단, EKS MVP 전용 topic/group 또는 내부 fixture receipt 필드가 있는 Snapshot Job은 별도 bounded fixture 실행 의도로 분류해 Airflow 경로로 보낸다. fixture 의도가 감지됐는데 exact topic/group, batch ID, expected count, IAM 9098 또는 Kubernetes runner 계약이 맞지 않으면 기존 Kafka 경로로 fallback하지 않고 command를 거부한다. 이 예외는 기존 Kafka Snapshot의 offset/commit 순서와 canonical Continuous 경로를 변경하지 않는다.
 
-dev 모듈화 이후에도 이 예외를 `etl_service.py`에 다시 합치지 않는다. fixture 판별·slot·immutable source boundary는 `services/etl/eks_fixture.py`, Kubernetes 실행과 owner/generation Catalog fence는 `application/eks_airflow_execution.py`, terminal retry 상태 계산은 `application/eks_spark_retry.py`, deny-only evidence 기록은 `application/eks_msk_fault_execution.py`가 소유한다. Spark Kubernetes 이름·attempt annotation 계산도 `src/sparkKubernetesIdentity.mjs`에 격리한다. `etl_service.py`는 application/service adapter를 조합하는 compatibility façade이며 일반 Kafka Snapshot과 Continuous 경로는 이 EKS 전용 모듈을 실행하지 않는다. 2026-07-18 통합 기준과 검증 결과는 [pair1·dev 통합 기록](pair1-dev-integration-2026-07-18.md)에 남긴다.
+dev 모듈화 이후에도 이 예외를 `etl_service.py`에 다시 합치지 않는다. fixture 판별·slot·immutable source boundary는 `services/etl/eks_fixture.py`, Kubernetes 실행과 owner/generation Catalog fence는 `application/eks_airflow_execution.py`, terminal retry 상태 계산은 `application/eks_spark_retry.py`, deny-only evidence 기록은 `application/eks_msk_fault_execution.py`가 소유한다. Spark Kubernetes 이름·attempt annotation 계산도 `src/sparkKubernetesIdentity.mjs`에 격리한다. `etl_service.py`는 application/service adapter를 조합하는 compatibility façade이며 일반 Kafka Snapshot과 Continuous 경로는 이 EKS 전용 모듈을 실행하지 않는다.
 
 EKS MVP fixture Run은 Airflow 외부 호출 전에 `etl_runs.task_states.eksMvpFixture`에 `runId`, producer `fixtureBatchId`/`expectedCount`, exact broker/topic/group, 선택된 `icebergTable`, Run 전용 output/checkpoint path를 함께 저장한다. 이 RDS row가 boundary와 slot target의 source of truth다. Airflow DAG Run conf와 내부 Spark 실행 요청은 같은 `sourceBoundary`를 운반하지만 값을 새로 계산하지 않으며, FastAPI는 요청 boundary가 RDS와 정확히 같고 현재 slot mapping이 예약 시 table과 같을 때만 lease를 획득하고 Spark payload를 만든다. SparkApplication은 RDS boundary에서 만든 manifest와 driver env, `asklake.io/fixture-batch-id` annotation을 받는다. Job 설정, Airflow 요청 또는 runtime slot mapping이 나중에 바뀌면 SparkApplication 제출 전에 fail-closed한다. contract version 1의 과거 Run은 기존 default group/table에 한해서만 읽기 호환한다.
 
@@ -820,6 +879,8 @@ ETL 수직 흐름은 제품 service에 테스트 분기를 추가하지 않고 a
 
 ## 24) EKS Realtime V1-only runtime
 
+이 절은 현재 canonical Continuous owner인 EKS Realtime workload의 V1-only 배포 profile을 정의한다. `deploy/control-plane-ownership.json`은 EKS Realtime V1 worker를 active owner로, EC2 Compose worker를 rollback standby로 선언한다. 이후 owner 변경도 runtime 계약이나 template만으로 처리하지 않고 이전 owner fence, 승인된 generation, workload와 ownership manifest를 함께 갱신해야 한다.
+
 EKS realtime의 유일한 실행 엔진은 Spark Structured Streaming이다. 전용 worker는
 `CONTINUOUS_WORKER_SCOPE=all`로 Kafka Continuous와 Continuous SQL desired state를
 reconcile하고, SparkApplication은 MSK IAM으로 source topic/group을 읽어 S3 Iceberg에
@@ -869,3 +930,17 @@ migration Job이 Alembic과 metadata bootstrap을 먼저 완료하며, 실제 co
 schema DDL을 실행하지 않는다. PostgreSQL 연결에는 bounded
 `idle_in_transaction_session_timeout`을 적용하고 request session 종료 시 열린 transaction을
 명시적으로 rollback한 뒤 연결을 pool에 반환한다.
+
+## 상세 계약과 참고 문서
+
+| 주제 | 기준 문서 |
+| --- | --- |
+| 제품 범위와 사용자 흐름 | [Product Planning](01-product-planning.md) |
+| 공개 API와 화면별 데이터 계약 | [API Reference](03-api-reference.md) |
+| Source, Pipeline, Run, 권한, SQL의 요청·응답 | [API Contract](api-contract.md) |
+| backend 연동·물리 처리·Catalog 검증 상태 | [Backend Integration Readiness](backend-integration-readiness.md) |
+| SQL Query Run과 결과 저장 | [Trino Query Run Contract](trino-query-run-contract.md), [Trino Result Storage Contract](trino-query-result-storage-contract.md) |
+| Continuous SQL·ClickHouse realtime | [SQL Job 실행 트리 V1](realtime-2026/contracts/sql-job-execution-tree-v1.md), [Continuous SQL V1](realtime-2026/contracts/continuous-sql-v1.md) |
+| Continuous owner와 배포 경계 | [EKS·EC2 단일-owner 계약](refactor-2026/contracts/control-plane-deployment-ownership.md) |
+| E2E·장애 복구 증거 | [ETL E2E·Recovery 하네스](refactor-2026/contracts/etl-e2e-recovery-harness.md) |
+| 로컬 실행·검증·배포 절차 | [Development Guide](04-development-guide.md), [Deployment Runbook](deployment-runbook.md) |

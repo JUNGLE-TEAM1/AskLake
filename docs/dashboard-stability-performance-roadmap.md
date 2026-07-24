@@ -1,5 +1,9 @@
 # Dashboard 안정성·성능 개선 로드맵
 
+> **문서 상태 — Historical**
+>
+> Issue·branch 기준으로 작성한 단계별 계획이다. 현재 Dashboard API는 [API Reference](03-api-reference.md)와 [API Contract](api-contract.md), 측정 결과는 [Dashboard Performance Verification](dashboard-performance-verification.md)을 따른다.
+
 ## 1. 문서 목적
 
 이 문서는 Dashboard가 느리고 저장 결과를 신뢰하기 어려운 문제를 한 번에 크게 고치지 않고, 안전한 순서로 나눠 해결하기 위한 작업 지도다.

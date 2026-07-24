@@ -1,5 +1,9 @@
 # AI Gateway + MCP Query AI rollout
 
+> **문서 상태 — Historical**
+>
+> 단계별 rollout 계획과 당시 구현 상태가 함께 남아 있다. 현재 public API와 UI 경계는 [API Reference](03-api-reference.md), [API Contract](api-contract.md), [AI Chat UI Contract](ai-chat-ui-contract.md)를 따른다.
+
 ## 목적
 
 브라우저가 모델 공급자와 직접 통신하지 않고, 기존 `POST /api/query/ai-suggestions` 계약을 유지하면서 내부 AI Gateway와 AskLake Catalog MCP를 연결한다. EC2 Docker Compose는 `backend`와 `ai-server`를 별도 컨테이너로 운영하고, EKS는 `asklake-web` release 안에서 digest-pinned 단일 replica Gateway와 private ClusterIP Service를 운영한다.

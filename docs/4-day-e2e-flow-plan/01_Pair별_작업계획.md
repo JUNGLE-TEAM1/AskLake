@@ -1,5 +1,9 @@
 # 01 Pair별 작업계획
 
+> **문서 상태 — 역사적 작업 기록 (2026-07)**
+>
+> 당시 Pair 분업 계획을 보존한다. 현재 문서는 [AskLake 문서 포털](../README.md)에서 찾는다.
+
 ## Pair A - ETL Creation & Job Operations
 
 ### 담당 범위
@@ -73,7 +77,7 @@ Pair A는 볼륨이 크다. 2명만 고정으로 처리하지 말고, B/C가 빨
 | A11 DAG Steps | `dagSteps` mapper, 현재 step 표시, 실패 step 표시 | A 또는 C | C 합류 좋음 |
 | A12 Hardening | 중복 클릭, rollback, 422/500/timeout, Toast | A 또는 C | C 합류 가능 |
 
-상세 분할과 합류 규칙은 [05_PairA_독립모듈_분할.md](/Users/sisu/Documents/AskLake/docs/4-day-e2e-flow-plan/05_PairA_독립모듈_분할.md)를 따른다.
+상세 분할과 합류 규칙은 [05_PairA_독립모듈_분할.md](./05_PairA_독립모듈_분할.md)를 따른다.
 
 ## Pair B - Catalog, Lineage & SQL Analysis
 

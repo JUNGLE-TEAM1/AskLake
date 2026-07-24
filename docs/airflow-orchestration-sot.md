@@ -1,8 +1,12 @@
 # Airflow Orchestration SOT
 
-This document is the source of truth for the AskLake Airflow orchestration work.
-If this document conflicts with detailed API or architecture documents, update
-those documents in the same phase instead of letting the contract drift.
+> **Document status — Historical**
+>
+> This file mixes the initial phase plan, branch baseline, and implementation history. Use [Architecture](02-architecture.md) and the [Airflow Execution Publication Contract](refactor-2026/contracts/airflow-execution-publication-boundary.md) for the current finite-batch and Catalog publication boundary.
+
+This document was the working source of truth during the initial AskLake Airflow
+orchestration phases. It is retained to explain those implementation decisions,
+not to override the current architecture or publication contract.
 
 ## 1. Goal
 

@@ -1,8 +1,12 @@
 # Job A AWS 배포·E2E 플레이북
 
-이 문서는 Job A 담당자가 AskLake를 AWS에 배포하고, 실제 S3 입력부터 Spark·Catalog·SQL까지 검증할 때 사용하는 실행 체크리스트다.
+> **문서 상태 — Runbook / EC2 Compose 호환 lane**
+>
+> 재실행 가능한 Phase 절차가 이 문서의 주 역할이며, 날짜·commit 기반 결과는 내부 Evidence 구간에 보존한다. 이 문서의 EC2 full-stack Compose는 현재 canonical Production topology가 아니며, 현재 ownership 기준은 [Architecture](02-architecture.md)와 [Control-plane Deployment Ownership](refactor-2026/contracts/control-plane-deployment-ownership.md)을 따른다.
 
-대화 context가 아니라 이 문서를 진행 상태의 기준으로 사용한다. 작업 중에는 완료한 항목을 체크하고, 명령 결과·Job ID·Run ID·S3 경로를 증거 표에 남긴다.
+이 문서는 Job A 담당자가 EC2 Compose 호환 lane을 AWS에 배포하고, 실제 S3 입력부터 Spark·Catalog·SQL까지 검증할 때 사용하는 실행 체크리스트다.
+
+이 문서는 해당 호환 lane의 절차와 과거 evidence를 보존한다. 작업을 다시 실행할 때는 날짜가 붙은 완료 표시를 현재 상태로 간주하지 말고, 새 명령 결과·Job ID·Run ID·S3 경로를 증거 표에 추가한다.
 
 기술 계약이나 운영 명령이 충돌하면 아래 문서를 우선한다.
 
@@ -11,11 +15,68 @@
 3. `docs/03-api-reference.md`
 4. `docs/04-development-guide.md`
 5. `docs/system-guardrails.md`
-6. `docs/deployment-overview.md`
-7. `docs/deployment-runbook.md`
-8. 이 플레이북
+6. `deploy/control-plane-ownership.json`
+7. `docs/refactor-2026/contracts/control-plane-deployment-ownership.md`
+8. `docs/deployment-runbook.md`
+9. 이 플레이북
+
+`docs/deployment-overview.md`는 작성 당시의 EC2 단일 노드 방향을 보존한 Historical 문서이므로 현재 운영 우선순위에 포함하지 않는다.
+
+## 한눈에 보기
+
+이 플레이북은 AWS에서 **S3 입력 → Airflow·Spark 처리 → Output S3 → Catalog·SQL 증거**를 단계적으로 검증하는 Job A 실행 문서입니다. 기준일이 붙은 상태 snapshot을 참고하되, 재실행 시에는 현재 환경을 다시 확인하고 가장 이른 미검증 Phase부터 진행합니다.
+
+```mermaid
+flowchart LR
+  P0["Phase 0\n배포 브랜치 안정화"] --> P1["Phase 1\nAWS S3·Spark 직접 검증"]
+  P1 --> P2["Phase 2\nEC2·IAM·네트워크"]
+  P2 --> P3["Phase 3\n서버 bootstrap·secret"]
+  P3 --> P4["Phase 4\nProduction Compose 배포"]
+  P4 --> P5["Phase 5\nHealth·지속성"]
+  P5 --> P6["Phase 6\n작은 파일 Core E2E"]
+  P6 --> P7["Phase 7\nSQL 분석 E2E"]
+  P7 --> P8["Phase 8\n256 MiB 통합"]
+  P8 --> P9["Phase 9\n증거·handoff"]
+  P6 -. 실패·원인 기록 .-> P5
+  P7 -. 결과 불일치 .-> P6
+  P8 -. 입력·prefix 문제 .-> P6
+```
+
+| 지금 필요한 일 | 시작 Phase | 확인할 증거 | 다음 단계 |
+| --- | --- | --- | --- |
+| 배포할 변경을 고정하고 검증 | Phase 0 | 원격 commit SHA, clean checkout, 검증 결과 | Phase 1 |
+| AWS S3와 Spark S3A 접근만 확인 | Phase 1 | 객체 checksum, Spark schema·row count, cleanup | Phase 2 |
+| EC2 instance role과 비공개 네트워크를 준비 | Phase 2 | host·container S3 접근, 최소 IAM 권한 | Phase 3 |
+| 서버 설정과 Compose를 준비·기동 | Phase 3~4 | secret file 권한, Compose config, container 상태 | Phase 5 |
+| 서비스 상태와 DB 지속성을 확인 | Phase 5 | external/internal health, DAG, restart count | Phase 6 |
+| 작은 파일로 end-to-end를 증명 | Phase 6 | Job/Run ID, Spark manifest, Output S3, Catalog | Phase 7 |
+| SQL 분석 또는 다중 파일 통합 | Phase 7~8 | query 결과, insight, prefix·입력 증거 | Phase 9 |
+| 재현 기록과 인계 | Phase 9 | 명령 결과, 한계, cleanup, handoff | 완료 |
+
+### 시작 전 안전 경계
+
+- 이 문서는 지정된 AWS 계정·버킷·EC2 환경을 전제로 합니다. 다른 계정, production 고객 데이터, 공유 prefix에는 임의로 실행하지 않습니다.
+- AWS access key, secret key, session token, 서버 `.env` 값은 문서·명령 인자·로그·Git diff에 기록하지 않습니다. AWS IAM Role/credential provider chain을 사용합니다.
+- PostgreSQL, Airflow, Spark와 같은 내부 서비스 포트를 public ingress에 열지 않습니다.
+- 실패 검증의 cleanup은 이 플레이북이 생성한 전용 fixture·Job·Run·S3 key만 대상으로 합니다. DB volume, bucket root, 공유 데이터는 포괄 삭제하지 않습니다.
+- Phase 6 이후의 E2E가 실패하면 다음 Phase로 넘어가지 않고, 실패한 Phase의 증거와 중단 조건을 먼저 기록합니다.
+
+### 권장 읽기 순서
+
+1. 처음 배포하는 담당자는 [2026-07-13 상태 기록](#4-2026-07-13-상태-기록), [Phase 지도](#6-phase-지도), 그리고 해당 Phase의 `목적 → 체크리스트 → 완료 기준 → 중단 조건`만 읽습니다.
+2. 배포 장애를 조사하는 담당자는 [Phase 3](#phase-3-서버-bootstrap환경secret)부터 [Phase 5](#phase-5-서비스-health와-지속성)와 [배포 운영 Runbook](deployment-runbook.md)을 함께 확인합니다.
+3. E2E 실패를 조사하는 담당자는 [Phase 6](#phase-6-작은-파일-core-e2e)부터 [Phase 8](#phase-8-job-b-256-mib-통합) 및 [ETL E2E·장애 복구 하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)을 확인합니다.
+4. 배포 완료·인계를 판단하는 담당자는 [Phase 9](#phase-9-증거정리handoff)의 증거 표와 알려진 한계를 확인합니다.
 
 ## 1. 이 문서 사용법
+
+이 문서는 실행 절차와 과거 실행 증거를 같은 파일에서 다음처럼 분리한다.
+
+| 구간 | 역할 | 갱신 기준 |
+| --- | --- | --- |
+| Phase 0~9 | 재실행 가능한 절차·체크리스트 | 현재 Architecture와 Deployment Runbook에 맞춰 갱신 |
+| 7. 증거 기록 템플릿 | 날짜·commit·환경에 종속된 실행 결과 | 기존 행을 현재 상태로 덮어쓰지 않고 새 evidence를 추가 |
+| 8~9 | 공통 안전 규칙과 문서 목적 | 운영 경계가 바뀔 때 갱신 |
 
 진행 상태는 다음처럼 표시한다.
 
@@ -67,7 +128,7 @@ Job A Phase 4의 체크리스트만 진행해줘.
 
 `users`, `meta`, `click_events`는 서로 스키마가 다르므로 각각 별도 논리 데이터셋과 prefix로 처리한다. 다중 파일 입력은 `click_events/part-*`처럼 같은 스키마를 가진 조각을 한 데이터셋으로 읽는 것을 뜻한다.
 
-## 4. 현재 상태
+## 4. 2026-07-13 상태 기록
 
 확인 기준일: 2026-07-13
 
@@ -291,9 +352,9 @@ ASKLAKE_S3_READINESS_READ_BUCKETS=asklake-dev-raw-215819604878-apne2
 ASKLAKE_S3_READINESS_WRITE_BUCKETS=asklake-dev-output-215819604878-apne2
 ```
 
-### 알려진 주의점
+### 2026-07-13 당시 주의점
 
-최신 `origin/dev`는 Trino/query engine 기능을 의도적으로 되돌린 상태다. Production Compose에는 Trino service나 TLS mount가 없으며, 이 브랜치에서 되살리지 않는다. Warehouse·Query Result 연결은 별도 기능 복원 결정과 테스트가 필요하다.
+당시 `origin/dev`는 Trino/query engine 기능을 의도적으로 되돌린 상태였고 Production Compose에 Trino service나 TLS mount가 없었다. 이 내용은 현재 Compose 계약이 아니라 해당 실행 시점의 evidence이며, 현재 opt-in Trino 구성은 [Deployment Runbook](deployment-runbook.md)과 실제 `deploy/docker-compose.prod.yml`을 다시 확인한다.
 
 ### 완료 기준
 
@@ -516,6 +577,9 @@ Job B가 만든 같은-schema shard들을 실제 AWS 배포 환경에서 prefix 
 - 정리되지 않은 비용 발생 resource를 명시함
 
 ## 7. 증거 기록 템플릿
+
+> **이 절의 표는 특정 날짜·commit·환경에서 얻은 검증 기록이다.**
+> 현재 배포 상태나 재실행 성공을 자동으로 의미하지 않으며, 새 실행은 기존 행을 수정하지 않고 별도 행과 artifact로 남긴다.
 
 Phase 완료 시 아래 표에 한 줄을 추가한다.
 

@@ -1,5 +1,9 @@
 # 01 Pair별 작업계획
 
+> **문서 상태 — 역사적 Source 스냅샷 (2026-07)**
+>
+> 현재 문서는 [AskLake 문서 포털](../README.md)에서 찾는다.
+
 ## Pair A - ETL Creation & Job Operations
 
 ### 담당 범위

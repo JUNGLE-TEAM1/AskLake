@@ -1,6 +1,29 @@
-# MinIO 100GB And Spark Validation Harness
+# MinIO·Spark Validation Harness
 
-This document records the Pair A person-1 backend validation path for Source, Schema, and Create. The ETL list starts empty; MinIO data is used only as test input.
+> **문서 상태 — Runbook**
+>
+> MinIO 입력에서 Spark 물리 결과와 Catalog 증거까지 확인하는 검증 경로를 정리한다.
+> 일반 개발은 필요한 lane 하나만 선택하고, EKS·Kafka Continuous·장애 복구는 각 전문 문서의
+> 사전 조건과 성공 기준을 따른다.
+
+파일명은 기존 링크 호환을 위해 유지한다. 이 문서의 local 1GiB형 sample, 250MiB Prefix fixture,
+opt-in EKS 10GB·100GB 실험은 서로 다른 검증 경로다. 특정 실행 결과를 일반적인 대용량 성능
+보장으로 해석하지 않는다.
+
+## 0. 검증 경로 선택
+
+| 목적 | 대표 진입점 | 비고 |
+| --- | --- | --- |
+| Source·Prefix 계약 확인 | `npm run verify:prefix-source` | 외부 MinIO 없이 실행 |
+| 형식별 Spark reader 확인 | `npm run minio:prepare-samples` → `npm run spark:validate` | 기존 MinIO fixture 필요 |
+| Snapshot Job·Catalog 확인 | `npm run verify:spark-run` | 호환되는 ecommerce CSV 필요 |
+| Raw text 전체 흐름 확인 | `npm run verify:record-parsing:e2e` | FastAPI·Airflow·Spark·Trino 포함 |
+| 다중 JSONL Prefix 확인 | `npm run verify:prefix-spark-e2e` | 기본 250MiB synthetic fixture |
+| Iceberg writer 확인 | `npm run verify:spark-iceberg-batch` | 격리 live verifier |
+| Kafka Continuous soak | `npm run verify:kafka-continuous-soak` | opt-in 대용량·장애 주입 |
+
+공통 준비는 [개발 가이드](04-development-guide.md), 정상·장애·복구 전체 흐름은
+[ETL E2E·Recovery Harness](refactor-2026/contracts/etl-e2e-recovery-harness.md)를 따른다.
 
 ## 1. Implemented Files
 

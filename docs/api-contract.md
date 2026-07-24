@@ -1,9 +1,17 @@
-Warning: truncated output (original token count: 65118)
-Total output lines: 4298
-
 # AskLake Backend API Contract
 
 > 2026-07-20부터 RAG/OpenSearch/embedding worker runtime과 RAG Dataset API/UI는 제거됐다. 이 문서의 RAG request/response 서술은 persisted payload·migration 호환을 위한 역사적 계약이며 새 runtime을 활성화하지 않는다.
+
+> **문서 상태: Contract.** 이 문서는 AskLake API의 요청·응답 의미, 권한, 상태 전이, idempotency와 호환 규칙을 정의한다.
+
+| 찾는 내용 | 기준 |
+| --- | --- |
+| 공개 endpoint 탐색 | [API Reference](03-api-reference.md) |
+| 상세 request/response와 동작 의미 | 이 문서 |
+| 현재 구현·연결·검증 상태 | [Backend Integration Readiness](backend-integration-readiness.md) |
+| 컴포넌트와 상태 소유권 | [Architecture](02-architecture.md) |
+| 환경변수와 실행·검증 명령 | [Development Guide](04-development-guide.md) |
+| 기계 판독형 현재 schema | FastAPI OpenAPI |
 
 ## 일반 Trino SQL Job의 Kafka revision 자동 갱신
 

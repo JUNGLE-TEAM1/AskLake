@@ -1,5 +1,9 @@
 # 04 E2E Fallback 검증
 
+> **문서 상태 — 역사적 Source 스냅샷 (2026-07)**
+>
+> 현재 live 검증은 [ETL E2E·Recovery Harness](../refactor-2026/contracts/etl-e2e-recovery-harness.md)를 따른다.
+
 ## 검증 목표
 
 이번 검증의 목표는 데이터 크기가 아니다. 작은 샘플 데이터라도 같은 ID와 상태가 화면 사이를 끝까지 지나가는지 확인한다.

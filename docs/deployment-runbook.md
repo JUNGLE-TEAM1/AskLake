@@ -1,7 +1,10 @@
-# AskLake EC2 배포 운영 Runbook
+# AskLake EC2 Compose 호환 운영 Runbook
 
-이 문서는 개발 중 EC2 배포 서버를 켜고, 재배포하고, 끄는 반복 절차를 정리한다.
-정식 GitHub Actions 자동 배포 전에도 같은 절차를 로컬에서 실행할 수 있게 하는 것이 목표다.
+> **문서 상태 — Runbook / 현재 실행 가능한 호환 운영 lane**
+>
+> 이 문서는 `deploy/docker-compose.prod.yml`로 web·batch·Continuous service를 한 EC2에서 운영하는 호환 lane의 절차다. 현재 canonical owner는 EKS web·finite batch + Realtime V1이며 EC2 Continuous worker는 rollback standby다. EC2로 owner를 이전하도록 별도 승인된 경우에만 web backend의 Continuous loop를 끄고 전용 `continuous-worker` 하나가 side effect를 소유한다. AskLake 전체 Production topology의 기준은 [Architecture](02-architecture.md)와 [Control-plane Deployment Ownership](refactor-2026/contracts/control-plane-deployment-ownership.md)을 따른다.
+
+이 문서는 EC2 Compose 배포 서버를 켜고, 재배포하고, 끄는 반복 절차를 정리한다. 해당 호환 lane을 정식 GitHub Actions 자동 배포 전에도 로컬에서 같은 방식으로 운영할 수 있게 하는 것이 목표다.
 
 ## 전제
 

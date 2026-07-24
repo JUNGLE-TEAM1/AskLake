@@ -1,6 +1,10 @@
-# 검증 명령 지도와 기준 결과
+# 리팩터링 기준선 검증 명령과 당시 결과 (2026-07-16)
 
-모든 결과는 제품 코드 변경 전 `origin/dev@b93ae273`에서 2026-07-16 실행했다. 외부 service·credential이 필요한 검증은 별도로 표시한다.
+> **문서 상태 — 역사적 기준선 기록**
+>
+> 이 문서는 제품 코드 변경 전 `origin/dev@b93ae273`에서 2026-07-16 실행한 명령과 당시 결과를 보존한다. 현재 전체 검증 명령의 source of truth가 아니다.
+
+현재 대표 검증은 [Development Guide](../../04-development-guide.md)를 먼저 확인한다. 실행 가능한 script의 기계적 기준은 [`backend/package.json`](../../../backend/package.json), [`frontend/package.json`](../../../frontend/package.json)과 `.github/workflows/`다. 외부 service·credential이 필요한 당시 검증은 아래에 별도로 표시한다.
 
 ## PR 01에서 실행한 검증
 

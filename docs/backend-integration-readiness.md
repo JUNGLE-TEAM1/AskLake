@@ -1,13 +1,29 @@
 # AskLake Backend Integration Readiness
 
+> **문서 상태 — Canonical**
+>
+> 구현·연결·검증 상태와 남은 Production 범위를 기록한다. 제품 범위는
+> [제품 기획](01-product-planning.md), 상태 소유권은 [아키텍처](02-architecture.md),
+> 상세 요청·응답은 [API Contract](api-contract.md)를 우선한다.
+
+최근 확인된 Continuous SQL 항목:
+
 - [x] 일반 Trino SQL Job의 Kafka Base Dataset revision 감지 및 backend 자동 재실행
 - [x] 자동 실행 성공 후에만 Gold Catalog mapping과 published revision cursor 교체
 - [x] 실패 시 기존 성공 Gold 유지 및 Job revision refresh 오류 상태 저장
 
-이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 기본 live API mode에서 backend를 기준으로 검증하고, frontend-only QA에서만 `VITE_USE_MOCK_API=true` fallback을 사용한다.
-FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
+이 문서는 AskLake frontend와 backend 연결 상태, 남은 API 범위, 검증 기준을 정리한다.
+Source·Schema·Create·Run 흐름은 기본 live API mode에서 FastAPI backend를 기준으로 검증하고,
+frontend-only QA에서만 `VITE_USE_MOCK_API=true` fallback을 사용한다.
+FastAPI 전환의 공통 구조와 의사결정은 [FastAPI 전환 계획](backend-fastapi-transition-plan.md)을 기준으로 한다.
 
-상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
+빠른 탐색:
+
+- [현재 연결 상태](#1-현재-연결-상태)
+- [Live API 계약](#2-live-api-contract)
+- [검증 명령](#6-검증-명령)
+- [EKS MVP 준비 상태](#eks-mvp-backend-readiness)
+- [Realtime 2026 준비 상태](#realtime-2026-foundation-readiness)
 
 현재 기본 Continuous SQL 배포 모드는 `CONTINUOUS_SQL_SERVING_MODE=iceberg`다. 현재 구현은 Kafka → Spark Structured Streaming → 고정 정적 Iceberg snapshot JOIN → Iceberg/S3 output → Catalog revision → Dashboard 수동 반영의 legacy direct-consumer 경로를 사용하며 ClickHouse v1/v2 profile과 consumer owner는 기본 비활성이다. Issue #1117 Phase 4까지 Catalog producer metadata, SQL dependency resolution, tree run/node run·atomic Job lock/lease/fencing과 parent-owned child dispatch를 추가했다. revision-driven transform runtime과 direct consumer 제거는 아직 전환하지 않는다. 목표 경계는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 
@@ -83,7 +99,7 @@ Rule/target 변경의 빠른 검증은 `npm run verify:dataset-identity`, `npm r
 
 canonical Quality가 보존한 evaluated/drop/quarantine counter가 유효하면 최종 `outputRows`도 같은 근거에서 계산하고 중복 final `count()`를 생략한다. counter가 누락·손상되면 기존 Spark count로 돌아가되 raw source lineage가 아니라 staged Parquet를 다시 읽는다. `quality.outputRowCountSource`가 실제 선택 경로를 durable manifest에 남긴다.
 
-## 2. Pair A Live Contract
+## 2. Live API Contract
 
 Pair A 생성 요청은 nested `draftPipeline`을 submit 직전에 flat `CreatePipelineRequest`로 변환한다.
 
