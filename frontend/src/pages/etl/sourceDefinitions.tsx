@@ -185,7 +185,7 @@ export function buildSourceConnectionDefinitions(sourceDefaults: SourceConnector
         ["CONSUMER GROUP ID", "asklake-etl-consumer-01"],
         ["Offset Policy", "Earliest (Start from beginning)"],
         ["Message Format", "JSON (Auto-infer Schema)"],
-        ["Authentication", "SASL / SCRAM"],
+        ["Authentication", "AWS MSK IAM"],
       ],
       testItems: [["Broker Reachable", "Not tested"], ["Topic Access", "Pending"], ["Backend connector", "Required"]],
       logs: ["Kafka 소스 윈도우 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 Kafka 프로토콜 핸드셰이크를 수행할 수 없습니다."],

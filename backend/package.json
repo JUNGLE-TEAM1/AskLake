@@ -7,7 +7,7 @@
     "dev": "npm run start:fastapi",
     "dev:query-runtime": "bash ../scripts/start-local-query-runtime.sh",
     "install:production": "npm ci --omit=dev",
-    "verify:node-dependencies": "node --input-type=module -e \"await import('@aws-sdk/client-s3'); await import('kafkajs'); await import('mongodb'); await import('parquetjs-lite'); await import('pg');\"",
+    "verify:node-dependencies": "node --input-type=module -e \"await import('@aws-sdk/client-s3'); await import('aws-msk-iam-sasl-signer-js'); await import('kafkajs'); await import('mongodb'); await import('parquetjs-lite'); await import('pg');\"",
     "verify:backward-compatibility": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-backward-compatibility.py",
     "verify:legacy-paths": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-legacy-path-register.py",
     "verify:quality-gates": "python3 ../scripts/refactor_audit/quality_gate.py --base ${ASKLAKE_QUALITY_GATE_BASE:-origin/dev}",
@@ -146,6 +146,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1079.0",
     "@smithy/node-http-handler": "^4.9.3",
+    "aws-msk-iam-sasl-signer-js": "1.0.3",
     "kafkajs": "^2.2.4",
     "kafkajs-snappy": "^1.1.0",
     "mongodb": "^6.21.0",
