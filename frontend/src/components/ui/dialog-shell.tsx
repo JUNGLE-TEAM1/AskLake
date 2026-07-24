@@ -24,6 +24,7 @@ export interface DialogShellProps {
   "aria-label"?: string;
   bodyClassName?: string;
   bodyScrollArea?: boolean;
+  bodyScrollAreaType?: React.ComponentPropsWithoutRef<typeof ScrollArea>["type"];
   children: React.ReactNode;
   closeLabel?: string;
   contentClassName?: string;
@@ -46,6 +47,7 @@ export function DialogShell({
   "aria-label": ariaLabel,
   bodyClassName,
   bodyScrollArea = false,
+  bodyScrollAreaType,
   children,
   closeLabel = "닫기",
   contentClassName,
@@ -106,7 +108,10 @@ export function DialogShell({
           ) : null}
         </header>
         {bodyScrollArea ? (
-          <ScrollArea className={cn("min-h-0 px-6 py-5", bodyClassName)}>
+          <ScrollArea
+            className={cn("min-h-0 px-6 py-5", bodyClassName)}
+            type={bodyScrollAreaType}
+          >
             {children}
           </ScrollArea>
         ) : (
