@@ -468,6 +468,7 @@ def run_kafka_continuous_maintenance(
             "ruleFingerprint": canonical_rule_fingerprint(compiled_rules.result.contract_version, canonical_rules),
             "ruleOutputSchema": compiled_rules.result.output_schema,
             "rules": canonical_rules,
+            "recordParsing": job.record_parsing or None,
             "schemaColumns": job.schema_columns or [],
             "schemaFingerprint": job.schema_fingerprint,
             "schemaEvolutionPolicy": (job.continuous_config or {}).get("schemaEvolutionPolicy") or {},

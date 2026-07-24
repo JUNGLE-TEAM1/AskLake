@@ -416,6 +416,12 @@ grep -q 's3a://asklake-dev-output-example/continuous-runtime' "$REALTIME_V1_REND
 grep -q 'serviceAccountName: asklake-realtime-v1-worker' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'name: asklake-runtime' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'value: "asklake-realtime-v1-spark"' "$REALTIME_V1_RENDERED_FILE"
+for jdbc_alias in TRINO_ICEBERG_JDBC_URL TRINO_ICEBERG_JDBC_USER TRINO_ICEBERG_JDBC_PASSWORD; do
+  grep -A5 "name: $jdbc_alias" "$REALTIME_V1_RENDERED_FILE" | grep -q 'name: asklake-spark-runtime'
+done
+grep -A5 'name: TRINO_ICEBERG_JDBC_URL' "$REALTIME_V1_RENDERED_FILE" | grep -q 'key: ASKLAKE_SPARK_ICEBERG_JDBC_URL'
+grep -A5 'name: TRINO_ICEBERG_JDBC_USER' "$REALTIME_V1_RENDERED_FILE" | grep -q 'key: ASKLAKE_SPARK_ICEBERG_JDBC_USER'
+grep -A5 'name: TRINO_ICEBERG_JDBC_PASSWORD' "$REALTIME_V1_RENDERED_FILE" | grep -q 'key: ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD'
 grep -q 'name: ASKLAKE_KAFKA_AUTH_MODE' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'value: "local:///opt/asklake/scripts/kafka_continuous_stream.py"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar' "$REALTIME_V1_RENDERED_FILE"

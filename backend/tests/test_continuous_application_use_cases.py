@@ -559,6 +559,61 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
         self.assertIn("catalog", decision.reason)
         self.assertIn("dashboard", decision.reason)
 
+    def test_current_report_is_applied_before_missing_worker_is_recreated(self) -> None:
+        events = []
+        current_runtime = runtime(status="running")
+        current_runtime.metrics = record_runtime_command(
+            {},
+            command_transition("stopped", "startContinuous"),
+            worker_attempt_id="start-current",
+        )
+        current_job = job()
+        current_job.status = "running"
+        reconciliation_hooks = ContinuousReconciliationHooks(
+            reconcile_stale_maintenance=lambda *_args, **_kwargs: None,
+            reconcile_pending_replay=lambda *_args, **_kwargs: None,
+            report_path=lambda _job_id: Path("unused"),
+            read_report=lambda _path: JsonDocument(
+                state=JsonDocumentState.FOUND,
+                value={
+                    "workerAttemptId": "start-current",
+                    "status": "running",
+                    "publishedBatches": [{"batchId": 7}],
+                },
+            ),
+            worker_status=lambda _job, _runtime: {"containerState": "missing"},
+            materialize_batch=lambda *_args, **_kwargs: None,
+            sync_session=lambda *_args, **_kwargs: None,
+            write_ack=lambda *_args, **_kwargs: None,
+            mark_failed=lambda *_args, **_kwargs: None,
+            apply_report=lambda *_args, **_kwargs: events.append("apply_report"),
+        )
+
+        with (
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "get_kafka_continuous_runtime",
+                return_value=current_runtime,
+            ),
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "save_kafka_continuous_command",
+                side_effect=lambda *_args: events.append("save"),
+            ),
+        ):
+            reconcile_continuous_runtime(
+                None,
+                current_job,
+                worker=FakeWorker(events),
+                hooks=reconciliation_hooks,
+            )
+
+        self.assertEqual(
+            events,
+            ["apply_report", "worker:start:start-current", "save"],
+        )
+        self.assertEqual(current_runtime.status, "starting")
+
     def test_same_evidence_produces_the_same_decision(self) -> None:
         evidence = self.evidence(container_state="running")
         self.assertEqual(decide_reconciliation(evidence), decide_reconciliation(evidence))

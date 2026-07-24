@@ -55,6 +55,8 @@ test("Kubernetes Continuous SparkApplication keeps JDBC credentials in Secret re
       ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET_NAME: "asklake-spark-runtime",
       ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR: '{"asklake.io/workload-class":"spark"}',
       ASKLAKE_SPARK_KUBERNETES_TOLERATIONS: '[{"key":"asklake.io/workload","operator":"Equal","value":"spark","effect":"NoSchedule"}]',
+      ASKLAKE_SPARK_MSK_IAM_AUTH_JAR: "local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar",
+      ASKLAKE_SPARK_RUNTIME_PATCH_CONFIGMAP: "asklake-kafka-runtime-patch",
     });
     const serialized = JSON.stringify(application);
     const password = application.spec.driver.env.find((entry) => entry.name === "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD");
@@ -67,6 +69,14 @@ test("Kubernetes Continuous SparkApplication keeps JDBC credentials in Secret re
     assert.equal(application.spec.hadoopConf["fs.s3a.aws.credentials.provider"], "software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider");
     assert.equal(application.spec.driver.nodeSelector["asklake.io/workload-class"], "spark");
     assert.equal(application.spec.executor.tolerations[0].effect, "NoSchedule");
+    assert.deepEqual(application.spec.deps.jars, [
+      "local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar",
+    ]);
+    assert.equal(application.spec.volumes[0].configMap.name, "asklake-kafka-runtime-patch");
+    assert.equal(
+      application.spec.driver.volumeMounts[0].mountPath,
+      "/opt/asklake/scripts/runtime/kafka_continuous_runtime.py",
+    );
   } finally {
     restoreEnvironment(saved);
   }

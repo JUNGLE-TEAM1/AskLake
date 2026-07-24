@@ -16,6 +16,9 @@ export function buildContinuousSparkApplication({
     "asklake.worker-attempt-id": workerAttemptId,
   };
   const env = kubernetesEnvironment(runtimeEnvironment, environment);
+  const runtimePatchConfigMap = String(
+    environment.ASKLAKE_SPARK_RUNTIME_PATCH_CONFIGMAP || "",
+  ).trim();
   const workload = {
     labels,
     env,
@@ -24,7 +27,20 @@ export function buildContinuousSparkApplication({
       "ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR",
     ),
     tolerations: kubernetesTolerations(environment),
+    ...(runtimePatchConfigMap
+      ? {
+          volumeMounts: [{
+            name: "kafka-runtime-patch",
+            mountPath: "/opt/asklake/scripts/runtime/kafka_continuous_runtime.py",
+            subPath: "kafka_continuous_runtime.py",
+            readOnly: true,
+          }],
+        }
+      : {}),
   };
+  const jars = [
+    String(environment.ASKLAKE_SPARK_MSK_IAM_AUTH_JAR || "").trim(),
+  ].filter(Boolean);
   return {
     apiVersion: "sparkoperator.k8s.io/v1beta2",
     kind: "SparkApplication",
@@ -38,7 +54,20 @@ export function buildContinuousSparkApplication({
       mainApplicationFile: environment.ASKLAKE_SPARK_CONTINUOUS_SCRIPT || "/opt/asklake/scripts/kafka_continuous_stream.py",
       sparkVersion: environment.ASKLAKE_SPARK_KUBERNETES_VERSION || "4.0.1",
       restartPolicy: { type: "Never" },
-      deps: packages.length ? { packages } : undefined,
+      ...(runtimePatchConfigMap
+        ? {
+            volumes: [{
+              name: "kafka-runtime-patch",
+              configMap: { name: runtimePatchConfigMap },
+            }],
+          }
+        : {}),
+      deps: packages.length || jars.length
+        ? {
+            ...(packages.length ? { packages } : {}),
+            ...(jars.length ? { jars } : {}),
+          }
+        : undefined,
       hadoopConf: kubernetesHadoopConf(environment),
       sparkConf: {
         "spark.sql.shuffle.partitions": String(positiveInt(environment.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS, 4)),

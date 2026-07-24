@@ -322,6 +322,16 @@ def reconcile_continuous_runtime(
         forced_terminal_status=decision.terminal_status,
         contract_was_initialized=contract_initialized,
     )
+    # A final report can remain durable after its SparkApplication disappears.
+    # Apply that report first so the last committed batch is not lost, then
+    # restore the worker when the durable desired state is still running.
+    # Without this second step every reconciliation cycle reapplied the same
+    # report and never recreated the missing Kubernetes resource.
+    if (
+        evidence.desired_state == "running"
+        and container_state in {"exited", "missing"}
+    ):
+        _restart_missing_worker(db, job, runtime, worker, hooks)
 
 
 def _apply_deferred_terminal_signal(

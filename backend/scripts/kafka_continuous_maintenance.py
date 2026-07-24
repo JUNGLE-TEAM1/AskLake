@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.functions import array, array_except, array_union, col, concat, concat_ws, from_json, get_json_object, lit, map_keys, size, transform, when
+from pyspark.sql.functions import array, array_except, array_union, col, concat, concat_ws, from_json, get_json_object, lit, map_keys, size, split, struct, transform, trim, when
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
 from pyspark.sql.window import Window
 
@@ -39,6 +39,8 @@ RULE_OUTPUT_SCHEMA = [
     item for item in json.loads(os.environ.get("ASKLAKE_MAINTENANCE_RULE_OUTPUT_SCHEMA", "[]"))
     if isinstance(item, (list, tuple)) and len(item) >= 2
 ]
+RECORD_PARSING = json.loads(os.environ.get("ASKLAKE_MAINTENANCE_RECORD_PARSING", "{}"))
+RECORD_PARSING_ENABLED = RECORD_PARSING.get("enabled") is True
 
 
 def spark_type(value: str):
@@ -83,7 +85,61 @@ def nested_payload_column(source_path):
     return value
 
 
+def raw_record_tokens(value_column=None):
+    source_value = value_column if value_column is not None else col("raw_payload")
+    return split(trim(source_value), r"\s+")
+
+
+def raw_record_columns():
+    columns = RECORD_PARSING.get("columns")
+    if not isinstance(columns, list):
+        return []
+    return sorted(
+        [column for column in columns if isinstance(column, dict)],
+        key=lambda column: int(column.get("position") or 0),
+    )
+
+
+def raw_record_payload(schema, value_column=None):
+    tokens = raw_record_tokens(value_column)
+    columns_by_name = {
+        str(column.get("name") or "").strip(): column
+        for column in raw_record_columns()
+        if str(column.get("name") or "").strip()
+    }
+
+    def field_value(field, parent_path=""):
+        source_path = f"{parent_path}.{field.name}" if parent_path else field.name
+        if isinstance(field.dataType, StructType):
+            return struct(*[
+                field_value(child, source_path).alias(child.name)
+                for child in field.dataType.fields
+            ]).cast(field.dataType)
+        column_def = columns_by_name.get(source_path)
+        if column_def is None:
+            return lit(None).cast(field.dataType)
+        return tokens.getItem(int(column_def.get("position") or 0)).cast(field.dataType)
+
+    expected = int(RECORD_PARSING.get("expectedFieldCount") or len(raw_record_columns()))
+    parsed = struct(*[
+        field_value(field).alias(field.name)
+        for field in schema.fields
+    ]).cast(schema)
+    return when(size(tokens) == lit(expected), parsed).otherwise(lit(None).cast(schema))
+
+
 def raw_source_value(source_path):
+    if RECORD_PARSING_ENABLED:
+        column_def = next(
+            (
+                column for column in raw_record_columns()
+                if str(column.get("name") or "").strip() == source_path
+            ),
+            None,
+        )
+        if column_def is None:
+            return lit(None).cast("string")
+        return raw_record_tokens().getItem(int(column_def.get("position") or 0))
     return get_json_object(col("raw_payload"), json_path(source_path))
 
 
@@ -91,6 +147,8 @@ def unknown_field_expressions(expected_keys_by_parent):
     unknown_condition = lit(False)
     unknown_keys = None
     empty_array = array().cast("array<string>")
+    if RECORD_PARSING_ENABLED:
+        return unknown_condition, empty_array
     for parent_path, expected_keys in expected_keys_by_parent.items():
         raw_object = from_json(
             col("raw_payload") if not parent_path else get_json_object(col("raw_payload"), json_path(parent_path)),
@@ -370,9 +428,27 @@ def replay_quarantine(spark: SparkSession, output_path: str, run_id: str, iceber
         policy["additiveNullable"] = "allow"
         policy["unknownField"] = "ignore"
     parsed = (frame
-        .withColumn("raw_map", from_json(col("raw_payload"), MapType(StringType(), StringType())))
-        .withColumn("payload", from_json(col("raw_payload"), schema)))
-    malformed = col("raw_map").isNull() | col("payload").isNull()
+        .withColumn(
+            "raw_map",
+            (
+                lit(None).cast(MapType(StringType(), StringType()))
+                if RECORD_PARSING_ENABLED
+                else from_json(col("raw_payload"), MapType(StringType(), StringType()))
+            ),
+        )
+        .withColumn(
+            "payload",
+            (
+                raw_record_payload(schema)
+                if RECORD_PARSING_ENABLED
+                else from_json(col("raw_payload"), schema)
+            ),
+        ))
+    malformed = (
+        col("payload").isNull()
+        if RECORD_PARSING_ENABLED
+        else (col("raw_map").isNull() | col("payload").isNull())
+    )
     required_missing = lit(False)
     incompatible_type = lit(False)
     for field, _target in aliases:

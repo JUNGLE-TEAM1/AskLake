@@ -124,6 +124,17 @@ async function startWorkerKubernetes(request, containerName) {
   if (existing && !["exited", "failed"].includes(sparkApplicationState(existing))) {
     return kubernetesWorkerResult(jobId, containerName, existing, { started: false });
   }
+
+  // Finish every fallible submission preflight before removing a terminal
+  // SparkApplication.  In particular, missing Iceberg credentials used to
+  // leave the durable start intent without any Kubernetes resource because
+  // validation happened only after the old application was deleted.
+  const requestedWorkerAttemptId = String(request.workerAttemptId || "").trim() || null;
+  const workerAttemptId = requestedWorkerAttemptId || randomUUID();
+  const application = continuousSparkApplication(request, runtime, workerAttemptId);
+  await ensureOutputBucket(required(request.outputPath, "outputPath"));
+  await clearKubernetesCommand(jobId);
+
   if (existing) {
     await client.delete(applicationName);
     for (let attempt = 0; attempt < 25; attempt += 1) {
@@ -135,14 +146,9 @@ async function startWorkerKubernetes(request, containerName) {
     }
   }
 
-  await ensureOutputBucket(required(request.outputPath, "outputPath"));
-  await clearKubernetesCommand(jobId);
   // The API/control-plane has already committed this fence before asking the
   // runner to submit.  Preserve it so a stale REST status cannot leave a
   // durable start intent permanently stuck in `starting`.
-  const requestedWorkerAttemptId = String(request.workerAttemptId || "").trim() || null;
-  const workerAttemptId = requestedWorkerAttemptId || randomUUID();
-  const application = continuousSparkApplication(request, runtime, workerAttemptId);
   const created = await client.create(application);
   return kubernetesWorkerResult(jobId, containerName, created, { started: true, workerAttemptId });
 }

@@ -67,6 +67,21 @@ spec:
             - {name: ASKLAKE_SPARK_KUBERNETES_IMAGE, value: "{{ required "Spark image repository is required" .Values.sparkApplication.image.repository }}@{{ required "Spark image digest is required" .Values.sparkApplication.image.digest }}"}
             - {name: ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT, value: {{ .Values.realtimeV1.spark.serviceAccountName | quote }}}
             - {name: ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET_NAME, value: {{ .Values.realtimeV1.spark.runtimeSecretName | quote }}}
+            - name: TRINO_ICEBERG_JDBC_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.realtimeV1.spark.runtimeSecretName }}
+                  key: ASKLAKE_SPARK_ICEBERG_JDBC_URL
+            - name: TRINO_ICEBERG_JDBC_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.realtimeV1.spark.runtimeSecretName }}
+                  key: ASKLAKE_SPARK_ICEBERG_JDBC_USER
+            - name: TRINO_ICEBERG_JDBC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.realtimeV1.spark.runtimeSecretName }}
+                  key: ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD
             - {name: ASKLAKE_SPARK_CONTINUOUS_SCRIPT, value: {{ .Values.realtimeV1.spark.mainApplicationFile | quote }}}
             - {name: ASKLAKE_SPARK_MSK_IAM_AUTH_JAR, value: {{ .Values.realtimeV1.kafka.iamAuthJar | quote }}}
             - {name: ASKLAKE_KAFKA_AUTH_MODE, value: {{ .Values.realtimeV1.kafka.authMode | quote }}}

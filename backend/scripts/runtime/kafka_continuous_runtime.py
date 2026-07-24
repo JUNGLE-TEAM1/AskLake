@@ -554,14 +554,20 @@ def raw_record_payload(schema: StructType, value_column: Any = None):
         for column in raw_record_columns()
         if str(column.get("name") or "").strip()
     }
-    fields = []
-    for field in schema.fields:
-        column_def = columns_by_name.get(field.name)
+
+    def field_value(field: Any, parent_path: str = ""):
+        source_path = f"{parent_path}.{field.name}" if parent_path else field.name
+        if isinstance(field.dataType, StructType):
+            return struct(*[
+                field_value(child, source_path).alias(child.name)
+                for child in field.dataType.fields
+            ]).cast(field.dataType)
+        column_def = columns_by_name.get(source_path)
         if column_def is None:
-            value = lit(None).cast(field.dataType)
-        else:
-            value = tokens.getItem(int(column_def.get("position") or 0)).cast(field.dataType)
-        fields.append(value.alias(field.name))
+            return lit(None).cast(field.dataType)
+        return tokens.getItem(int(column_def.get("position") or 0)).cast(field.dataType)
+
+    fields = [field_value(field).alias(field.name) for field in schema.fields]
     expected = int(RECORD_PARSING.get("expectedFieldCount") or len(raw_record_columns()))
     parsed = struct(*fields).cast(schema)
     return when(size(tokens) == lit(expected), parsed).otherwise(lit(None).cast(schema))
@@ -1361,13 +1367,25 @@ def main() -> None:
                 iceberg_commit=latest.get("icebergCommit") if isinstance(latest.get("icebergCommit"), dict) else {},
             )
         LAST_BATCH_EVIDENCE = {**latest, "status": "success", "lastError": None, "dagSteps": latest_steps}
-    source = (spark.readStream.format("kafka")
+    source_reader = (spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", config.broker)
         .option("subscribe", config.topic)
         .option("startingOffsets", os.environ.get("ASKLAKE_CONTINUOUS_OFFSET_POLICY", "earliest"))
         .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "100"))
-        .option("kafka.group.id", config.consumer_group_id)
-        .load())
+        .option("kafka.group.id", config.consumer_group_id))
+    if config.broker.rsplit(":", 1)[-1] == "9098":
+        source_reader = (source_reader
+            .option("kafka.security.protocol", "SASL_SSL")
+            .option("kafka.sasl.mechanism", "AWS_MSK_IAM")
+            .option(
+                "kafka.sasl.jaas.config",
+                "software.amazon.msk.auth.iam.IAMLoginModule required;",
+            )
+            .option(
+                "kafka.sasl.client.callback.handler.class",
+                "software.amazon.msk.auth.iam.IAMClientCallbackHandler",
+            ))
+    source = source_reader.load()
     raw_payload = col("value").cast("string")
     payload = raw_record_payload(schema, raw_payload) if RECORD_PARSING_ENABLED else from_json(raw_payload, schema)
     raw_map = lit(None).cast(MapType(StringType(), StringType())) if RECORD_PARSING_ENABLED else from_json(raw_payload, MapType(StringType(), StringType()))
