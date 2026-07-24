@@ -68,55 +68,7 @@ AskLake에서는 다음 순서로 진행합니다.
 
 아래 그림의 EKS web·finite batch와 Realtime V1 worker는 현재 canonical ownership을 나타냅니다. Route 53·CloudFront·ALB와 Amazon RDS는 발표용 목표 구성이며, EC2 Compose Continuous worker는 rollback standby이자 호환 운영 경로입니다. 실제 owner와 배포 lane은 [ownership manifest](deploy/control-plane-ownership.json)와 [아키텍처 문서](docs/02-architecture.md)를 따릅니다.
 
-```mermaid
-flowchart TB
-  User["외부 사용자·협업자"]
-
-  subgraph AWS["AWS"]
-    subgraph Traffic["Traffic Delivery Layer (목표)"]
-      Route53["Amazon Route 53"] --> CDN["Amazon CloudFront"]
-    end
-    subgraph VPC["VPC"]
-      ALB["Application Load Balancer"]
-      subgraph EKS["EKS Runtime Cells"]
-        FE["React Frontend"]
-        API["FastAPI API Server"]
-        Airflow["Apache Airflow"]
-        Spark["Apache Spark\n유한 배치 처리"]
-        Worker["Realtime V1 Worker"]
-        StreamSpark["Spark Structured Streaming"]
-        FE --> API
-        API --> Airflow --> Spark
-        Worker --> StreamSpark
-      end
-      Trino["Trino"]
-      API <--> RDS["Amazon RDS"]
-      API --> Trino
-    end
-    S3["Amazon S3\nData Lake"]
-    Monitor["CloudWatch"]
-  end
-
-  User --> Route53
-  CDN --> ALB
-  ALB --> FE
-  ALB --> API
-
-  Mongo["MongoDB"] --> API
-  Postgres["PostgreSQL"] --> API
-  Kafka["Kafka"] --> Worker
-  RawS3["Amazon S3"] --> Spark
-  Rest["REST API"] --> API
-
-  Spark --> S3
-  StreamSpark --> S3
-  Trino --> S3
-  API --> Gateway["AI Gateway"]
-  Gateway --> OpenAI["OpenAI API"]
-  API -. 로그·메트릭 .-> Monitor
-  Airflow -. 로그·메트릭 .-> Monitor
-  Spark -. 로그·메트릭 .-> Monitor
-```
+![AskLake 시스템 아키텍처](docs/assets/asklake-system-architecture.png)
 
 ## 핵심 구성 요소
 
