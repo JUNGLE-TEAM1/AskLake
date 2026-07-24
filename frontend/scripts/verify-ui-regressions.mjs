@@ -1426,13 +1426,14 @@ const checks = [
     name: "Ungrouped Dashboard bars preserve category colors and full tooltip labels",
     files: [
       "src/pages/dashboard/runtime/WidgetRenderer.tsx",
+      "src/pages/dashboard/runtime/barChartAxes.ts",
       "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
       "src/styles/dashboard-runtime-widgets.css",
     ],
     patterns: [
       /if \(widget\.config\.groupKey\) return seriesIndex;[\s\S]*return dataPointIndex \?\? seriesIndex;/,
       /distributed: !widget\.config\.groupKey/,
-      /tooltip:[\s\S]*chartData\.categories\[formatterOptions\?\.dataPointIndex \?\? -1\] \?\? String\(value\)/,
+      /buildBarChartTooltip[\s\S]*categories\[formatterOptions\?\.dataPointIndex \?\? -1\] \?\? String\(value\)/,
       /currentConfig\.groupKey \|\| currentConfig\.xKey/,
       /currentConfig\.xKey,/,
       /\.apexcharts-tooltip-title[\s\S]*overflow-wrap: anywhere;[\s\S]*white-space: normal;/,

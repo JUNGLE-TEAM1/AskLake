@@ -40,7 +40,7 @@ import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantCo
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 import { resolveChartValueAxisRange } from "./chartAxisRange";
 import {
-  buildBarChartAxes,
+  buildBarChartAxes, buildBarChartTooltip,
   formatChartAxisNumber,
   formatChartCategoryAxisLabel,
 } from "./barChartAxes";
@@ -1116,7 +1116,6 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     valueKey,
   });
   if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
-
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
@@ -1137,20 +1136,11 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     plotOptions: {
       bar: {
         borderRadius: 5,
-        distributed: !widget.config.groupKey,
-        horizontal: isHorizontal,
+        distributed: !widget.config.groupKey, horizontal: isHorizontal,
         columnWidth: "48%",
       },
     },
-    tooltip: {
-      ...baseOptions.tooltip,
-      x: {
-        ...baseOptions.tooltip?.x,
-        formatter: (value, formatterOptions) => (
-          chartData.categories[formatterOptions?.dataPointIndex ?? -1] ?? String(value)
-        ),
-      },
-    },
+    tooltip: buildBarChartTooltip(baseOptions, chartData.categories),
     xaxis: axes.xaxis,
     yaxis: axes.yaxis,
   };
