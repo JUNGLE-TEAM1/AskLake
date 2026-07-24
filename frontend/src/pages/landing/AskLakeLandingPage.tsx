@@ -223,7 +223,7 @@ export function AskLakeLandingPage() {
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
               loading="lazy"
-              src="https://www.youtube-nocookie.com/embed/-bSkREem8dM?rel=0"
+              src="https://www.youtube-nocookie.com/embed/LC8-Sm4BhDI?rel=0"
               title="AskLake 소개 영상"
             />
           </div>

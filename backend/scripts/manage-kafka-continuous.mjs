@@ -44,6 +44,7 @@ import {
   kubernetesRuntimeConfig,
   sparkApplicationName,
   sparkApplicationState,
+  waitForKubernetesWorkerDeletion,
 } from "./spark-kubernetes-client.mjs";
 import { buildContinuousSparkApplication } from "./kafka-continuous-kubernetes.mjs";
 
@@ -169,7 +170,8 @@ async function terminateWorkerKubernetes(jobId, containerName) {
   const application = await client.get(applicationName);
   if (!application) return kubernetesWorkerResult(jobId, containerName, null, { containerState: "not_running" });
   await client.delete(applicationName);
-  return kubernetesWorkerResult(jobId, containerName, application, { containerState: "terminateRequested" });
+  await waitForKubernetesWorkerDeletion(client, applicationName);
+  return kubernetesWorkerResult(jobId, containerName, application, { containerState: "not_running" });
 }
 
 async function workerStatusKubernetes(jobId, containerName) {

@@ -52,6 +52,7 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
             record_audit_event=Mock(),
             require_governed_access=governance,
             require_permission=Mock(),
+            terminate_continuous_worker=Mock(),
         )
 
         with patch("app.application.etl_job_commands.etl_repository.get_job_for_update", return_value=None):
@@ -76,6 +77,7 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
             record_audit_event=record_audit,
             require_governed_access=Mock(),
             require_permission=Mock(side_effect=denied),
+            terminate_continuous_worker=Mock(),
         )
 
         with (
@@ -140,6 +142,7 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
                     record_audit_event=Mock(),
                     require_governed_access=Mock(),
                     require_permission=Mock(),
+                    terminate_continuous_worker=Mock(),
                 )
                 with (
                     patch("app.application.etl_job_commands.etl_repository.get_job_for_update", return_value=job),
@@ -164,6 +167,83 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
                 self.assertEqual(raised.exception.details, expected_details)
                 db.execute.assert_not_called()
 
+    def test_delete_terminates_idle_continuous_worker_before_metadata_delete(self) -> None:
+        db = Mock()
+        job = _job("JOB-CONTINUOUS-STOPPED")
+        runtime = SimpleNamespace(status="stopped")
+        events: list[str] = []
+        hooks = EtlJobDeleteHooks(
+            add_audit_event=lambda *_args, **_kwargs: events.append("audit"),
+            permission_grants_for_job=lambda _db, _job: [],
+            reconcile_stale_maintenance_runs=Mock(),
+            record_audit_event=Mock(),
+            require_governed_access=Mock(),
+            require_permission=Mock(),
+            terminate_continuous_worker=lambda current_job, current_runtime: events.append(
+                f"terminate:{current_job.id}:{current_runtime.status}"
+            ),
+        )
+
+        with (
+            patch("app.application.etl_job_commands.etl_repository.get_job_for_update", return_value=job),
+            patch("app.application.etl_job_commands.etl_repository.list_run_models_for_job", return_value=[]),
+            patch(
+                "app.application.etl_job_commands.etl_repository.get_kafka_continuous_runtime",
+                return_value=runtime,
+            ),
+            patch("app.application.etl_job_commands.etl_repository.list_kafka_continuous_sessions", return_value=[]),
+            patch(
+                "app.application.etl_job_commands.etl_repository.list_kafka_continuous_maintenance_run_models",
+                return_value=[],
+            ),
+            patch(
+                "app.application.etl_job_commands.CatalogRepository.mark_producer_deleted",
+                side_effect=lambda current_job_id: events.append(f"retain:{current_job_id}") or [],
+            ),
+        ):
+            deleted_job_id = delete_job(db, job.id, ActorContext(name="owner"), hooks=hooks)
+
+        self.assertEqual(deleted_job_id, job.id)
+        self.assertEqual(events, [f"terminate:{job.id}:stopped", f"retain:{job.id}", "audit"])
+        db.delete.assert_called_once_with(job)
+        db.commit.assert_called_once_with()
+
+    def test_delete_keeps_metadata_when_continuous_termination_fails(self) -> None:
+        db = Mock()
+        job = _job("JOB-CONTINUOUS-CLEANUP-FAILED")
+        runtime = SimpleNamespace(status="stopped")
+        cleanup_error = RuntimeError("SparkApplication deletion was not observed")
+        hooks = EtlJobDeleteHooks(
+            add_audit_event=Mock(),
+            permission_grants_for_job=Mock(return_value=[]),
+            reconcile_stale_maintenance_runs=Mock(),
+            record_audit_event=Mock(),
+            require_governed_access=Mock(),
+            require_permission=Mock(),
+            terminate_continuous_worker=Mock(side_effect=cleanup_error),
+        )
+
+        with (
+            patch("app.application.etl_job_commands.etl_repository.get_job_for_update", return_value=job),
+            patch("app.application.etl_job_commands.etl_repository.list_run_models_for_job", return_value=[]),
+            patch(
+                "app.application.etl_job_commands.etl_repository.get_kafka_continuous_runtime",
+                return_value=runtime,
+            ),
+            patch("app.application.etl_job_commands.etl_repository.list_kafka_continuous_sessions", return_value=[]),
+            patch(
+                "app.application.etl_job_commands.etl_repository.list_kafka_continuous_maintenance_run_models",
+                return_value=[],
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "deletion was not observed"):
+                delete_job(db, job.id, ActorContext(name="owner"), hooks=hooks)
+
+        db.rollback.assert_called_once_with()
+        db.execute.assert_not_called()
+        db.delete.assert_not_called()
+        db.commit.assert_not_called()
+
     def test_delete_cleans_dependents_audits_and_commits_in_one_transaction(self) -> None:
         db = Mock()
         job = _job()
@@ -179,6 +259,7 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
             record_audit_event=Mock(),
             require_governed_access=lambda *_args, **_kwargs: events.append("governance"),
             require_permission=lambda *_args, **_kwargs: events.append("permission"),
+            terminate_continuous_worker=lambda *_args: events.append("terminate"),
         )
         repository_patches = _repository_patches(job, retained_dataset_ids=["DATASET-1"])
 
@@ -228,6 +309,7 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
             record_audit_event=Mock(),
             require_governed_access=Mock(),
             require_permission=Mock(),
+            terminate_continuous_worker=Mock(),
         )
         repository_patches = _repository_patches(job)
 
