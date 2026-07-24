@@ -447,6 +447,10 @@
   border-bottom-color: #e2e8f0;
   color: #0f172a;
   font-weight: 800;
+  line-height: 1.35;
+  max-width: min(360px, 70vw);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .asklake-apex-widget .apexcharts-legend {

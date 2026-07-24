@@ -40,7 +40,7 @@ import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantCo
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 import { resolveChartValueAxisRange } from "./chartAxisRange";
 import {
-  buildBarChartAxes,
+  buildBarChartAxes, buildBarChartTooltip,
   formatChartAxisNumber,
   formatChartCategoryAxisLabel,
 } from "./barChartAxes";
@@ -431,7 +431,7 @@ function colorSlotIndexFromChartSelection(widget: DashboardRuntimeWidget, select
 
   if (widget.type === "bar_chart") {
     if (widget.config.groupKey) return seriesIndex;
-    return dataPointIndex === null ? seriesIndex : 0;
+    return dataPointIndex ?? seriesIndex;
   }
 
   if (widget.type === "line_chart" || widget.type === "area_chart") {
@@ -1116,7 +1116,6 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     valueKey,
   });
   if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
-
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
@@ -1137,10 +1136,11 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     plotOptions: {
       bar: {
         borderRadius: 5,
-        horizontal: isHorizontal,
+        distributed: !widget.config.groupKey, horizontal: isHorizontal,
         columnWidth: "48%",
       },
     },
+    tooltip: buildBarChartTooltip(baseOptions, chartData.categories),
     xaxis: axes.xaxis,
     yaxis: axes.yaxis,
   };

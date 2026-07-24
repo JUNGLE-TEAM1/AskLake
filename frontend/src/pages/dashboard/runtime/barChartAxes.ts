@@ -82,3 +82,15 @@ export function buildBarChartAxes(
     },
   };
 }
+
+export function buildBarChartTooltip(baseOptions: ApexOptions, categories: string[]): ApexOptions["tooltip"] {
+  return {
+    ...baseOptions.tooltip,
+    x: {
+      ...baseOptions.tooltip?.x,
+      formatter: (value, formatterOptions) => (
+        categories[formatterOptions?.dataPointIndex ?? -1] ?? String(value)
+      ),
+    },
+  };
+}

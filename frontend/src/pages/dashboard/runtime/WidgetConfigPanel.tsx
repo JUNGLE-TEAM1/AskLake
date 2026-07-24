@@ -615,15 +615,18 @@ export function WidgetConfigPanel({
       return currentConfig.labelKey && labels.length ? labels : ["기본 색상"];
     }
 
-    const seriesKey = type === "bar_chart" ? currentConfig.groupKey : currentConfig.seriesKey;
-    const labels = uniqueLabelsFromWidget(editingWidget, seriesKey, multiColorFallbackCount);
-    if (seriesKey) return labels.length ? labels : fallbackColorLabels(multiColorFallbackCount);
+    const colorKey = type === "bar_chart"
+      ? currentConfig.groupKey || currentConfig.xKey
+      : currentConfig.seriesKey;
+    const labels = uniqueLabelsFromWidget(editingWidget, colorKey, multiColorFallbackCount);
+    if (colorKey) return labels.length ? labels : fallbackColorLabels(multiColorFallbackCount);
 
     return ["기본 색상"];
   }, [
     currentConfig.groupKey,
     currentConfig.labelKey,
     currentConfig.seriesKey,
+    currentConfig.xKey,
     editingWidget,
     type,
   ]);
