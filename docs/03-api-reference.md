@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 34950)
-Total output lines: 1380
-
 # 03. API Reference
 
 > Kafka streaming Base Dataset과 static reference Dataset을 사용하는 일반 Trino SQL Job은 backend worker가 새 Dataset revision을 감지해 저장 SQL을 재실행한다. 별도 Continuous JOIN 생성 API는 기본 화면 흐름에서 사용하지 않는다.
@@ -9,9 +6,15 @@ Total output lines: 1380
 
 Query AI 내부 Gateway/MCP 계약은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)에 정리되어 있다. Frontend 공개 계약은 기존 `/api/query/ai-suggestions`를 유지한다.
 
-이 문서는 AskLake API/interface 계약의 상위 진입점이다.
-상세 request/response shape는 기존 문서인 `docs/api-contract.md`를 기준으로 한다.
-백엔드 연결 범위와 남은 작업은 `docs/backend-integration-readiness.md`를 기준으로 한다.
+> **문서 상태: Contract.** 이 문서는 AskLake의 공개 API와 interface를 찾는 상위 진입점이다. 상세 request/response shape는 [API Contract](api-contract.md), 실제 연결·검증 상태는 [Backend Integration Readiness](backend-integration-readiness.md)를 기준으로 한다.
+
+| 찾는 내용 | 기준 문서 |
+| --- | --- |
+| 공개 endpoint와 주요 runtime 경계 | 이 문서 |
+| request/response schema, 오류, validation | [API Contract](api-contract.md) |
+| 구현·연결·검증 상태 | [Backend Integration Readiness](backend-integration-readiness.md) |
+| 컴포넌트와 상태 소유권 | [Architecture](02-architecture.md) |
+| 환경변수와 실행·검증 명령 | [Development Guide](04-development-guide.md) |
 
 ## 1) 현재 상태
 

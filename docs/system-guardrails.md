@@ -11,6 +11,18 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 하네스는 작업 상태, 판단 근거, 검증 결과, 복구 경로를 공유하는 협업 프로토콜이다.
 기계가 안정적으로 막거나 감지할 수 있는 안전장치는 가능한 한 시스템에 둔다.
 
+## 빠른 읽기
+
+| 알고 싶은 내용 | 확인할 곳 |
+| --- | --- |
+| 실제로 동작하는 보호 장치와 상태 | Guardrail Inventory |
+| 개발자가 지켜야 할 규칙과 실패 대응 | Team Guide |
+| lifecycle·release gate | Lifecycle Guardrails |
+| 아직 자동화되지 않은 항목 | Follow-Up Candidates |
+| mock·live 검증 경계 | Scenario Audit Plan |
+
+`enabled`는 repository나 workflow에 구현되어 있다는 뜻이다. 실제 merge·deploy를 차단하는지는 `Enforced By`와 `Failure Behavior`를 함께 확인한다. 날짜가 붙은 아래 절은 해당 변경의 gate와 증거를 보존하며, 현재 명령은 관련 workflow와 `package.json`을 다시 대조한다.
+
 ## 1) Responsibility Split
 
 | Category | Responsibility |

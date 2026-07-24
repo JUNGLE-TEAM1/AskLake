@@ -1,5 +1,10 @@
 # EC2 Single-Node Deploy Runbook
 
+> **Document status — Historical / historical demo runbook**
+>
+> This Node/mock-oriented single-node lane is not the current production topology or the current EC2 Compose compatibility lane. Use [Architecture](02-architecture.md) for canonical ownership and [Deployment Runbook](deployment-runbook.md) for current EC2 Compose operations.
+> The systemd Node/mock commands below are not maintained for current deployment and must not be used as current operating instructions.
+
 This runbook is for the smallest practical AskLake deployment on one EC2
 instance. It is intended for demo and smoke-test use, not high availability or
 large data processing.

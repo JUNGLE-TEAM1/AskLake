@@ -1,5 +1,9 @@
 # 05 PairA 독립모듈 분할
 
+> **문서 상태 — 역사적 작업 기록 (2026-07)**
+>
+> 당시 Pair A 분업 기준을 보존한다. 현재 문서는 [AskLake 문서 포털](../README.md)에서 찾는다.
+
 ## 목적
 
 Pair A의 범위는 Review 이후만이 아니다. Pair A는 Source Connection부터 Job 실행/이력/DAG까지 책임진다.

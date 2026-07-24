@@ -1,11 +1,16 @@
 # AskLake 배포 방향 정리
 
+> **문서 상태 — Historical / 역사적 초기 배포 방향**
+>
+> 이 문서의 EC2 단일 노드 목표 구조는 현재 EKS web·finite batch + Realtime V1 active owner 구조의 기준이 아니다. 현재 canonical ownership은 [Architecture](02-architecture.md)와 [Control-plane Deployment Ownership](refactor-2026/contracts/control-plane-deployment-ownership.md)을, rollback standby이자 호환 운영 경로인 EC2 Compose lane은 [Deployment Runbook](deployment-runbook.md)을 따른다.
+> 아래의 `목표`, `최종`, `기본`, `현재` 표현은 모두 작성 당시 계획과 상태를 뜻한다.
+
 이 문서는 AskLake를 AWS에 배포할 때 팀원이 빠르게 공유해야 할 결정을 정리한다.
 목표는 한 번 수동으로 올리는 것이 아니라, 고정된 AWS 인프라 위에서 `dev` 브랜치 변경을 반복 배포할 수 있게 만드는 것이다.
 
 Job A 담당자는 큰 방향을 이해한 뒤 `docs/job-a-aws-deployment-e2e-playbook.md`의 Phase 체크리스트와 증거 기록을 따라 진행한다.
 
-## 목표
+## 당시 목표
 
 AskLake 배포의 목표는 다음 흐름을 안정적으로 만드는 것이다.
 
@@ -21,7 +26,7 @@ PR merge to dev
 발표와 개발 검증에서는 외부 서비스 장애에 덜 흔들리는 구조가 중요하다.
 따라서 기본 배포는 실제 FastAPI backend와 실제 DB를 사용하되, source data는 미리 심은 fixture를 사용한다.
 
-## 현재 데모 구조
+## 당시 목표 구조
 
 초기 배포는 AWS EC2 한 대에 여러 컨테이너를 띄우는 구조로 간다.
 
@@ -252,7 +257,7 @@ docker compose logs backend
 
 브라우저에서는 Catalog, SQL Preview, 처리 Job 생성, Catalog dataset 등록까지 확인한다.
 
-## 결정 사항
+## 당시 결정 사항
 
 - AWS EC2 한 대와 Docker Compose를 기본 배포 구조로 사용한다.
 - HTTPS는 Caddy가 처리한다.
@@ -265,7 +270,7 @@ docker compose logs backend
 - production storage runtime은 EC2 IAM Role/default credential chain을 사용하고 static AWS key를 저장하지 않는다.
 - secret은 repo에 넣지 않는다.
 
-## 아직 하지 않는 일
+## 당시 범위 밖
 
 - ECS/Fargate 전환.
 - RDS/DocumentDB 같은 managed DB 전환.

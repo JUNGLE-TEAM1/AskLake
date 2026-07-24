@@ -1,5 +1,9 @@
 # FastAPI Backend 전환 설계 결정
 
+> **문서 상태 — Historical**
+>
+> Node demo API에서 FastAPI로 전환하던 시점의 설계·분업 기록이다. 현재 backend와 runtime 경계는 [Architecture](02-architecture.md), [API Reference](03-api-reference.md), [API Contract](api-contract.md)를 따른다.
+
 이 문서는 Node demo API를 FastAPI backend로 교체하기 위한 1차 선행 의사결정을 기록한다.
 목표는 모든 기능을 한 번에 옮기는 것이 아니라, 3개 Pair가 같은 구조 안에서 병렬 작업할 수 있는 공통 기반을 먼저 만드는 것이다.
 

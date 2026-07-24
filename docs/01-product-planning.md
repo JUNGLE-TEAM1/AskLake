@@ -1,13 +1,28 @@
 # 01. Product Planning
 
-이 문서는 AskLake의 제품 범위와 MVP 기준을 정하는 최상위 기획 문서다.
+> **문서 상태 — Canonical / 현재 제품 기준**
+>
+> 이 문서는 AskLake의 제품 범위와 MVP 기준을 정하는 최상위 기획 문서다. API 형식, 런타임 구성, 검증 명령은 각 전문 문서를 따른다.
 
-## 1) 프로젝트 한 줄 소개
+## 1) 한눈에 보기
 
-- 프로젝트명: AskLake
-- 한 줄 설명: 데이터 수집, 카탈로그, SQL 분석, 대시보드, AI 활용 흐름을 하나의 신뢰 가능한 데이터 플랫폼 경험으로 연결하는 프로젝트
-- 현재 Pair A 기준: Source, Schema, Create, Run 흐름은 live backend API를 목표 경로로 사용한다.
-- 현재 초기 데이터 기준: ETL job과 Catalog dataset은 비어 있을 수 있으며, 사용자가 파이프라인을 생성하고 실행한 뒤 Catalog dataset이 생긴다.
+| 항목 | 내용 |
+| --- | --- |
+| 한 줄 소개 | 데이터 수집, Catalog, SQL 분석, Dashboard, AI 활용을 하나의 신뢰 가능한 데이터 플랫폼 경험으로 연결한다. |
+| 해결하려는 문제 | 분산된 데이터의 출처·품질·권한·실행 결과·분석 근거가 서로 끊어지는 문제 |
+| 주요 사용자 | 데이터 엔지니어, 데이터 분석가, 운영·관리자 |
+| 현재 MVP | Source → Schema → Job 생성·실행 → Catalog → SQL·Dashboard 흐름을 live backend 경로로 연결 |
+| 초기 상태 | ETL Job과 Catalog Dataset은 비어 있을 수 있으며, 성공한 Job 실행 뒤 Catalog Dataset이 등록된다. |
+
+```mermaid
+flowchart LR
+  Source["Source 연결·Preview"] --> Schema["Schema·변환·품질·권한 설정"]
+  Schema --> Job["Job 생성·실행"]
+  Job --> Catalog["Catalog 등록·Lineage"]
+  Catalog --> Analyze["SQL 분석·Dashboard·AI 보조"]
+```
+
+빠르게 제품 의도를 파악하려면 문제 정의와 핵심 사용자 흐름을 먼저 읽고, 구현·운영 판단이 필요할 때 현재 MVP 범위와 EKS Realtime 계약을 확인한다.
 
 ## 2) 문제 정의
 
@@ -21,12 +36,12 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Catalog, SQL, Dashboard 화면은 dataset이 실제로 존재할 때만 분석/생성 동작을 허용해야 한다.
 - 사용자 기능은 FastAPI와 private AI Gateway의 live endpoint만 사용해야 하며, 테스트 fixture가 운영 화면의 성공 결과로 노출되면 안 된다.
 
-## 3) 타겟 사용자
+## 3) 주요 사용자
 
 - 데이터 엔지니어: 수집/처리 작업 생성, 실행, 재실행, 일시정지, 실패 확인
 - 데이터 분석가: 카탈로그 탐색, SQL 분석, SQL 결과 dataset 생성
 - 운영/관리자: 권한, 감사 로그, API 사용 상태 확인
-- 향후 AI 사용자: 신뢰 가능한 데이터셋과 근거를 기반으로 자연어 질의
+- AI 보조 기능 사용자: 신뢰 가능한 Dataset context를 기반으로 SQL·시각화 작업 보조
 
 ## 4) 현재 MVP 범위
 
@@ -42,7 +57,7 @@ EKS와 EC2의 배포 소스 브랜치는 모두 `dev`로 통일하고 각 releas
 
 - `/` AskLake 랜딩과 session login 진입
 - session actor 기반 로그인 guard, 프로필, 관리자 접근 분기
-- Dataset context를 선택하는 AI 활용 대화 UI
+- Dataset context를 사용하는 SQL·Dashboard Assistant
 - 사용자·그룹·권한·감사 로그 관리 콘솔
 - Source 연결 테스트와 Schema 추론
 - MinIO/S3에서 같은 형식의 파일 조각이 모인 하나의 prefix를 데이터셋으로 선택하고, 대표 파일 Preview와 전체 파일 수·용량·스키마 호환성을 확인한 뒤 전체 prefix를 실행 입력으로 사용
@@ -205,19 +220,7 @@ Identity는 전환 전후 동일해야 한다. 상세 계약과 evidence 형식�
 - Source/Schema/Create/Run/Catalog/SQL live 경로가 문서와 코드에서 같은 범위를 말한다.
 - Dashboard 영역은 FastAPI 저장 결과와 실제 widget action 적용 여부를 구분한다.
 
-## 8) 4일 데모 마일스톤
-
-단기 실행 목표는 실제 소스 데이터로 `Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Semantic Model 검증·게시 -> SQL 실행 -> 반복 SQL Job 또는 compatibility Lake Dataset 저장 -> Dashboard widget 생성 확인` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
-이 마일스톤은 demo readiness 기준이며, 실제 production runtime 완성 범위를 과장하지 않는다.
-
-| Day | 목표 | 종료 시 보여야 하는 상태 |
-| --- | --- | --- |
-| Day 1 | 생성 결과를 ETL 목록에 연결하고 실행 성공 후 Catalog dataset 생성 | 새 Job, 성공 Run, 새 Dataset, 기본 lineage가 보인다. |
-| Day 2 | Job 실행 상태를 History/DAG에 연결하고 Dataset을 SQL context로 전달 | 같은 Run ID가 History/DAG에 보이고 SQL 화면에 선택 Dataset query가 채워진다. |
-| Day 3 | SQL Query Run과 derived dataset 저장을 보강 | 완료된 SQL run과 새 Catalog dataset이 연결된다. |
-| Day 4 | 전체 흐름을 반복 QA하고 Dashboard fallback을 확인 | 발표자가 5분 안에 전체 흐름을 재현하고 Dashboard 화면이 404 없이 열린다. |
-
-## 9) 보류 범위
+## 8) 후속 확장 범위
 
 - 모든 source type의 production 연결
 - 임의 정규식 작성, 복수 구분자, 멀티라인 로그, 오류 행 자동 보정·재처리
@@ -230,16 +233,30 @@ Identity는 전환 전후 동일해야 한다. 상세 계약과 evidence 형식�
 - SQL 저장, Lake 저장, CSV export production 완성
 - 서버 검색/정렬, saved query, SQL history 전체 구현
 
-## 10) 오픈 질문
+## 9) 오픈 질문
 
 - Dashboard 404 fallback 제거 시점과 공유 링크·export 운영 범위를 결정해야 한다.
 - 인증/권한은 MVP에 포함할지, demo actor로 둘지 결정해야 한다. 단, Phase 0 기준으로는 표시용 identity metadata와 실제 permission grant를 분리한다.
 - Audit log는 product feature인지 operational evidence인지 먼저 정해야 한다.
 
-## 11) EKS Realtime V1-only 제품 계약
+## 10) EKS Realtime V1-only 제품 계약
+
+이 절은 EKS에서 Realtime workload를 운영할 때 허용하는 배포 profile을 정의한다. 현재 `deploy/control-plane-ownership.json`은 EKS Realtime V1 worker를 active Continuous control-plane owner로, EC2 Compose worker를 rollback standby로 선언한다. 이후 owner 변경도 이 제품 계약이나 template만으로 처리하지 않고 이전 owner fence와 승인된 generation, workload와 ownership manifest를 함께 갱신해야 한다.
 
 - Kafka 작업 생성 화면은 `배치 · Spark`와 `실시간 · Spark`를 표시한다.
 - 실시간 작업은 Spark Structured Streaming micro-batch를 S3 Iceberg에 append하고 durable
   checkpoint와 PostgreSQL runtime state로 재개한다.
 - SQL의 지속 실행 결과도 Spark/Iceberg publication 경계를 사용한다.
 - 같은 broker/topic/group/generation/checkpoint identity에는 active owner를 하나만 허용한다.
+
+## 11) 상세 계약과 참고 문서
+
+| 주제 | 기준 문서 |
+| --- | --- |
+| 시스템 구성, 상태 소유권, 런타임 경계 | [Architecture](02-architecture.md) |
+| 공개 API와 화면별 데이터 계약 | [API Reference](03-api-reference.md) |
+| Source, Pipeline, Run, 권한, SQL의 상세 요청·응답 | [API Contract](api-contract.md) |
+| backend 연동 범위와 검증 상태 | [Backend Integration Readiness](backend-integration-readiness.md) |
+| 로컬 실행, 검증, 개발 순서 | [Development Guide](04-development-guide.md) |
+| SQL 결과 lifecycle·저장 | [Trino Query Run Contract](trino-query-run-contract.md), [Trino Result Storage Contract](trino-query-result-storage-contract.md) |
+| Continuous SQL·Realtime 경계 | [SQL Job 실행 트리 V1](realtime-2026/contracts/sql-job-execution-tree-v1.md), [Continuous SQL V1](realtime-2026/contracts/continuous-sql-v1.md) |

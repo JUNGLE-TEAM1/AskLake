@@ -1,122 +1,121 @@
-# 04 E2E Fallback 寃利?
+# 04 E2E Fallback 검증
 
-## Deprecated For Current Pair A Live Path (2026-07-06)
+> **문서 상태 — 역사적 작업 기록 (2026-07-04)**
+>
+> 초기 4일 데모에서 mock fallback을 사용하던 기준이다. 현재 live 검증은 [Development Guide](../04-development-guide.md), [MinIO·Spark Validation Harness](../minio-100gb-spark-harness.md), [ETL E2E·Recovery Harness](../refactor-2026/contracts/etl-e2e-recovery-harness.md)를 따른다.
 
-This document is historical fallback guidance. Current Pair A Source / Schema / Create / Run validation should use live backend and Spark paths. Mock fallback must not be presented as the authoritative behavior for this PR.
+## 검증 목표
 
+이번 검증의 목표는 데이터 크기가 아니다. 작은 샘플 데이터라도 같은 ID와 상태가 화면 사이를 끝까지 지나가는지 확인한다.
 
-## 寃利?紐⑺몴
-
-?대쾲 寃利앹쓽 紐⑺몴???곗씠???ш린媛 ?꾨땲?? ?묒? ?섑뵆 ?곗씠?곕씪??媛숈? ID? ?곹깭媛 ?붾㈃ ?ъ씠瑜??앷퉴吏 吏?섍??붿? ?뺤씤?쒕떎.
-
-紐⑺몴 ?먮쫫:
+목표 흐름:
 
 ```text
-Review ?앹꽦
--> ETL Job ?앹꽦
--> Job ?ㅽ뻾
--> Catalog Dataset ?뺤씤
--> Lineage ?뺤씤
--> SQL ?ㅽ뻾
--> Dashboard Widget ?앹꽦
--> Dashboard ???Publish
+Review 생성
+-> ETL Job 생성
+-> Job 실행
+-> Catalog Dataset 확인
+-> Lineage 확인
+-> SQL 실행
+-> Dashboard Widget 생성
+-> Dashboard 저장/Publish
 ```
 
-## ?깃났 湲곗?
+## 성공 기준
 
-| 湲곗? | ?댁슜 |
-|---|---|
-| Job ?앹꽦 | Review ?앹꽦 ??ETL 紐⑸줉????Job??蹂댁씤?? |
-| Dataset ?앹꽦 | ?앹꽦 ?묐떟??Dataset??Catalog 紐⑸줉怨??곸꽭??蹂댁씤?? |
-| Run ?곌껐 | Job ?ㅽ뻾 ??媛숈? `runId`媛 ?곸꽭/?대젰/DAG??蹂댁씤?? |
-| Lineage ?쒖떆 | Dataset ?곸꽭??upstream/current/downstream 愿怨꾧? 蹂댁씤?? |
-| SQL ?ㅽ뻾 | ?좏깮 Dataset 湲곗? SELECT 寃곌낵媛 Result Preview??蹂댁씤?? |
-| Dashboard ?곌껐 | SQL Result媛 Dashboard Table Widget?쇰줈 ?쒖떆?쒕떎. |
-| ???Publish | ?????紐⑸줉???④퀬 Published ?붾㈃?먯꽌 媛숈? Widget??蹂댁씤?? |
-| ?ㅽ뙣 蹂듦뎄 | API ?ㅽ뙣??mock fallback ?꾩뿉???ㅼ떆 ?뺤긽 ?먮쫫?쇰줈 蹂듦뎄?쒕떎. |
+| 기준 | 내용 |
+| --- | --- |
+| Job 생성 | Review 생성 후 ETL 목록에 새 Job이 보인다. |
+| Dataset 생성 | 생성 응답의 Dataset이 Catalog 목록과 상세에 보인다. |
+| Run 연결 | Job 실행 후 같은 `runId`가 상세/이력/DAG에 보인다. |
+| Lineage 표시 | Dataset 상세에 upstream/current/downstream 관계가 보인다. |
+| SQL 실행 | 선택 Dataset 기준 SELECT 결과가 Result Preview에 보인다. |
+| Dashboard 연결 | SQL Result가 Dashboard Table Widget으로 표시된다. |
+| 저장/Publish | 저장 후 목록에 남고 Published 화면에서 같은 Widget이 보인다. |
+| 실패 복구 | API 실패나 mock fallback 후에도 다시 정상 흐름으로 복구된다. |
 
-## ?붾㈃??蹂댁뿬???섎뒗 利앷굅
+## 화면에 보여야 하는 증거
 
-| ?붾㈃ | 蹂댁뿬???섎뒗 利앷굅 |
-|---|---|
-| ETL 紐⑸줉 | Job ?대쫫, ?곹깭 諛곗?, 理쒓렐 ?ㅽ뻾 ?곹깭 |
-| ETL ?곸꽭/?대젰/DAG | `runId`, ?꾩옱 ?④퀎, ?ㅽ뻾 ?곹깭 |
-| Catalog 紐⑸줉/?곸꽭 | Dataset ?대쫫, schema, rows, size, freshness |
-| Lineage | upstream ?몃뱶, current Dataset ?몃뱶, downstream ?몃뱶 |
-| SQL | Dataset ?대쫫, read-only query, Result Preview, `runId` |
-| Dashboard Builder | Table Widget, Widget ?쒕ぉ, columns/rows, ????곹깭 |
-| Published Dashboard | ??λ맂 Dashboard ?대쫫, 媛숈? Widget 援ъ꽦 |
+| 화면 | 보여야 하는 증거 |
+| --- | --- |
+| ETL 목록 | Job 이름, 상태 배지, 최근 실행 상태 |
+| ETL 상세/이력/DAG | `runId`, 현재 단계, 실행 상태 |
+| Catalog 목록/상세 | Dataset 이름, schema, rows, size, freshness |
+| Lineage | upstream 노드, current Dataset 노드, downstream 노드 |
+| SQL | Dataset 이름, read-only query, Result Preview, `runId` |
+| Dashboard Builder | Table Widget, Widget 제목, columns/rows, 저장 상태 |
+| Published Dashboard | 저장된 Dashboard 이름, 같은 Widget 구성 |
 
-## ?섑뵆 ?곗씠??湲곗?
+## 샘플 데이터 기준
 
-| ??ぉ | 湲곗? |
-|---|---|
-| ?곗씠???ш린 | 10MB~100MB ?먮뒗 mock `sampleRows` |
-| ?곗씠???뺥깭 | CSV, JSONL, ?먮뒗 湲곗〈 fixture |
-| ?꾩닔 而щ읆 | SQL Result? Dashboard Table??蹂댁뿬以????덈뒗 3~6媛?而щ읆 |
-| ?꾩닔 row | ?붾㈃?먯꽌 preview 媛?ν븳 5~20媛?row |
-| Dataset ?대쫫 | ?곕え?먯꽌 諛섎났?대룄 ?룰컝由ъ? ?딅뒗 怨좎젙 ?대쫫 |
+| 항목 | 기준 |
+| --- | --- |
+| 데이터 크기 | 10MB~100MB 또는 mock `sampleRows` |
+| 데이터 형태 | CSV, JSONL, 또는 기존 fixture |
+| 필수 컬럼 | SQL Result와 Dashboard Table에 보여줄 수 있는 3~6개 컬럼 |
+| 필수 row | 화면에서 preview 가능한 5~20개 row |
+| Dataset 이름 | 데모에서 반복해도 헷갈리지 않는 고정 이름 |
 
-?섑뵆 ?곗씠?곕뒗 ?ㅼ젣 泥섎━ ?깅뒫??利앸챸?섍린 ?꾪븳 寃껋씠 ?꾨땲?? ?붾㈃怨??곹깭 ?꾨떖??寃利앺븯湲??꾪븳 理쒖냼 ?낅젰?대떎.
+샘플 데이터는 실제 처리 성능을 증명하기 위한 것이 아니다. 화면과 상태 전달을 검증하기 위한 최소 입력이다.
 
-## Fallback 湲곗?
+## Fallback 기준
 
-| ?ㅽ뙣 吏??| Fallback |
-|---|---|
-| Job ?앹꽦 API ?ㅽ뙣 | `createPipelineDraft` mock ?묐떟?쇰줈 Job/Dataset ?앹꽦 |
-| Job ?ㅽ뻾 API ?ㅽ뙣 | `runJobCommand` mock ?묐떟?쇰줈 Run/DAG ?곹깭 ?앹꽦 |
-| Catalog API ?ㅽ뙣 | mock Dataset 紐⑸줉怨??곸꽭 ?ъ슜 |
-| Lineage API ?놁쓬 | Dataset??`upstream/downstream` 諛곗뿴濡??④퀎??lineage ?쒖떆 |
-| SQL API ?ㅽ뙣 | Dataset `sampleRows`濡?`SqlResult` ?앹꽦 |
-| Dashboard ???API ?ㅽ뙣 | localStorage snapshot?쇰줈 Draft/Published ?곹깭 ?좎? |
-| Publish API ?ㅽ뙣 | local published snapshot?쇰줈 Published ?붾㈃ ?쒖떆 |
+| 실패 지점 | Fallback |
+| --- | --- |
+| Job 생성 API 실패 | `createPipelineDraft` mock 응답으로 Job/Dataset 생성 |
+| Job 실행 API 실패 | `runJobCommand` mock 응답으로 Run/DAG 상태 생성 |
+| Catalog API 실패 | mock Dataset 목록과 상세 사용 |
+| Lineage API 없음 | Dataset의 `upstream/downstream` 배열로 단계형 lineage 표시 |
+| SQL API 실패 | Dataset `sampleRows`로 `SqlResult` 생성 |
+| Dashboard 저장 API 실패 | localStorage snapshot으로 Draft/Published 상태 유지 |
+| Publish API 실패 | local published snapshot으로 Published 화면 표시 |
 
-Fallback????寃쎌슦 known issues???④릿?? ?? 諛쒗몴?먯꽌??"?ㅽ뙣?덈떎"媛 ?꾨땲??"?꾩옱 ??援ш컙? mock fallback?쇰줈 ?곕え ?먮쫫???좎??쒕떎"?쇨퀬 ?뺥솗??留먰븳??
+Fallback을 쓴 경우 known issues에 남긴다. 단, 발표에서는 "실패했다"가 아니라 "현재 이 구간은 mock fallback으로 데모 흐름을 유지한다"라고 정확히 말한다.
 
 ## Artifact index
 
-| Artifact | 紐⑹쟻 | ?꾩닔 ?꾨뱶 |
-|---|---|---|
-| `create-job-response.json` | Job/Dataset ?앹꽦 利앷굅 | `job.id`, `dataset.id`, `dataset.name` |
-| `job-command-response.json` | ?ㅽ뻾 ?곹깭 利앷굅 | `job.id`, `run.id`, `run.status`, `dagSteps` |
-| `catalog-dataset-{datasetId}.json` | Catalog ?쒖떆 洹쇨굅 | `id`, `name`, `schema`, `rows`, `size`, `upstream`, `downstream` |
-| `lineage-{datasetId}.json` | Lineage ?쒖떆 洹쇨굅 | `nodes`, `edges`, `selectedNodeId` |
-| `sql-result-{runId}.json` | SQL 寃곌낵 洹쇨굅 | `runId`, `datasetId`, `query`, `columns`, `rows`, `rowCount` |
-| `dashboard-snapshot-{dashboardId}.json` | Dashboard ???寃뚯떆 洹쇨굅 | `id`, `datasetId`, `sourceRunId`, `status`, `widgets` |
-| `known-issues.md` | ?ㅽ뙣/?쒗븳 ?ы빆 湲곕줉 | ?좎쭨, 利앹긽, ?곹뼢, ?꾩떆 ??? 諛쒗몴 臾멸뎄 |
+| Artifact | 목적 | 필수 필드 |
+| --- | --- | --- |
+| `create-job-response.json` | Job/Dataset 생성 증거 | `job.id`, `dataset.id`, `dataset.name` |
+| `job-command-response.json` | 실행 상태 증거 | `job.id`, `run.id`, `run.status`, `dagSteps` |
+| `catalog-dataset-{datasetId}.json` | Catalog 표시 근거 | `id`, `name`, `schema`, `rows`, `size`, `upstream`, `downstream` |
+| `lineage-{datasetId}.json` | Lineage 표시 근거 | `nodes`, `edges`, `selectedNodeId` |
+| `sql-result-{runId}.json` | SQL 결과 근거 | `runId`, `datasetId`, `query`, `columns`, `rows`, `rowCount` |
+| `dashboard-snapshot-{dashboardId}.json` | Dashboard 저장/게시 근거 | `id`, `datasetId`, `sourceRunId`, `status`, `widgets` |
+| `known-issues.md` | 실패/제한 사항 기록 | 날짜, 증상, 영향, 임시 대응, 발표 문구 |
 
-## Known issues 湲곕줉 諛⑹떇
+## Known issues 기록 방식
 
-Known issue??吏㏐퀬 援ъ껜?곸쑝濡??대떎.
+Known issue는 짧고 구체적으로 쓴다.
 
-| ??ぉ | ?묒꽦 湲곗? |
-|---|---|
-| ?좎쭨 | 臾몄젣媛 ?뺤씤???좎쭨 |
-| 利앹긽 | ?ъ슜?먭? 蹂대뒗 ?꾩긽 |
-| ?먯씤 | ?뺤씤??踰붿쐞源뚯?留??묒꽦 |
-| ?곹뼢 | ?대뼡 ?곕え ?붾㈃???곹뼢??二쇰뒗吏 |
-| ?꾩떆 ???| mock fixture, localStorage, sampleRows ??|
-| 諛쒗몴 臾멸뎄 | 諛쒗몴?먭? 洹몃?濡?留먰븷 ???덈뒗 ??臾몄옣 |
+| 항목 | 작성 기준 |
+| --- | --- |
+| 날짜 | 문제가 확인된 날짜 |
+| 증상 | 사용자가 보는 현상 |
+| 원인 | 확인된 범위까지만 작성 |
+| 영향 | 어떤 데모 화면에 영향을 주는지 |
+| 임시 대응 | mock fixture, localStorage, sampleRows 등 |
+| 발표 문구 | 발표자가 그대로 말할 수 있는 한 문장 |
 
-?덉떆:
+예시:
 
 ```md
-| ?좎쭨 | 利앹긽 | ?먯씤 | ?곹뼢 | ?꾩떆 ???| 諛쒗몴 臾멸뎄 |
-|---|---|---|---|---|---|
-| Day 3 | Dashboard ???API媛 ?ㅽ뙣??| ???endpoint 誘몄셿??| Dashboard 紐⑸줉 | localStorage snapshot ?ъ슜 | "?꾩옱 Dashboard ??μ? local snapshot?쇰줈 ?좎??섍퀬, 媛숈? ?곗씠???먮쫫? Published ?붾㈃源뚯? ?뺤씤?????덉뒿?덈떎." |
+| 날짜 | 증상 | 원인 | 영향 | 임시 대응 | 발표 문구 |
+| --- | --- | --- | --- | --- | --- |
+| Day 3 | Dashboard 저장 API가 실패함 | 저장 endpoint 미완성 | Dashboard 목록 | localStorage snapshot 사용 | "현재 Dashboard 저장은 local snapshot으로 유지하고, 같은 데이터 흐름은 Published 화면까지 확인할 수 있습니다." |
 ```
 
-## 諛쒗몴?먯꽌 留먰븯??諛⑹떇
+## 발표에서 말하는 방식
 
-?뺤긽 ?먮쫫:
+정상 흐름:
 
-- "Review?먯꽌 ?앹꽦??Job怨?Dataset??ETL 紐⑸줉怨?Catalog??媛숈씠 ?앷퉩?덈떎."
-- "??Dataset??schema? lineage媛 Catalog ?곸꽭?먯꽌 蹂댁엯?덈떎."
-- "媛숈? Dataset??SQL濡??닿퀬, SQL Result瑜?Dashboard Widget?쇰줈 ?섍퉩?덈떎."
-- "?????Published ?붾㈃?먯꽌 媛숈? Dashboard瑜??뺤씤?⑸땲??"
+- "Review에서 생성한 Job과 Dataset이 ETL 목록과 Catalog에 같이 생깁니다."
+- "이 Dataset의 schema와 lineage가 Catalog 상세에서 보입니다."
+- "같은 Dataset을 SQL로 열고, SQL Result를 Dashboard Widget으로 넘깁니다."
+- "저장 후 Published 화면에서 같은 Dashboard를 확인합니다."
 
-Fallback ?ъ슜 ??
+Fallback 사용 시:
 
-- "??援ш컙? ?꾩옱 mock fallback?쇰줈 ?곌껐?덉뒿?덈떎."
-- "以묒슂??寃껋? `datasetId`, `runId`, `sqlResult`, `dashboardId`媛 ?붾㈃ ?ъ씠?먯꽌 ?딄린吏 ?딅뒗?ㅻ뒗 ?먯엯?덈떎."
-- "?ㅼ젣 API媛 遺숈쑝硫?媛숈? response shape濡?援먯껜?섎㈃ ?⑸땲??"
+- "이 구간은 현재 mock fallback으로 연결했습니다."
+- "중요한 것은 `datasetId`, `runId`, `sqlResult`, `dashboardId`가 화면 사이에서 끊기지 않는다는 점입니다."
+- "실제 API가 붙으면 같은 response shape로 교체하면 됩니다."

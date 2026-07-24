@@ -4,7 +4,7 @@
 
 2026-07-16 dev 환경에서 기존 `asklake-web` Frontend/FastAPI release의 소유권을 유지한 채 Airflow만 별도 `asklake-airflow` Helm release로 배포했다. 최종 release는 revision 2, status `deployed`다. API server, scheduler, DAG processor는 각각 1 replica이며 모두 Ready, restart 0이다.
 
-이 기록은 목요일 전체 MSK → Spark → Iceberg → Trino → Catalog bounded E2E 완료를 뜻하지 않는다. `/Users/sisu/Downloads/eks-roadmap.md`에서 Pair B가 맡은 Airflow 3-Pod 분리, RDS/Secret 연결, DAG/API 준비 상태만 증명한다.
+이 기록은 목요일 전체 MSK → Spark → Iceberg → Trino → Catalog bounded E2E 완료를 뜻하지 않는다. 당시 별도 EKS roadmap에서 Pair B가 맡은 Airflow 3-Pod 분리, RDS/Secret 연결, DAG/API 준비 상태만 증명한다.
 
 ## Runtime Secret과 RDS TLS
 

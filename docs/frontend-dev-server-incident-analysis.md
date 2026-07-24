@@ -1,5 +1,9 @@
 # Frontend Dev Server Incident Analysis
 
+> **문서 상태 — 역사적 incident 기록**
+>
+> 당시 로컬 환경의 원인과 해결 과정을 보존한다. 현재 실행 명령은 [Development Guide](04-development-guide.md)를 우선한다.
+
 이 문서는 AskLake 프론트 dev server가 `127.0.0.1:5174`에서 반복적으로 안 뜨거나, 흰 화면으로 보이거나, `POSTGRES ERROR / Failed to fetch`를 보였던 원인을 정리한다.
 
 ## 결론
@@ -16,7 +20,7 @@
 
 ```bash
 export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
-cd /Users/sisu/Documents/AskLake/frontend
+cd frontend
 npm run dev
 ```
 
@@ -126,7 +130,7 @@ kill <npm-pid> <vite-pid>
 
 ```bash
 export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
-cd /Users/sisu/Documents/AskLake/frontend
+cd frontend
 npm run dev
 ```
 
@@ -162,7 +166,7 @@ backend live mode를 쓰려면 Postgres와 backend가 필요하다.
 ```bash
 docker compose up -d postgres
 
-cd /Users/sisu/Documents/AskLake/backend
+cd backend
 npm install
 npm run dev
 ```
