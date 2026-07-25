@@ -1275,9 +1275,8 @@ function PieLikeChartWidget({
   const total = circularChartTotal(allPoints);
   if (total <= 0) return <EmptyWidgetData />;
 
-  const configuredColor = widgetColorFromConfig(widget.config as Record<string, unknown>);
-  const colors = colorsForSlots(configuredColor, points.length);
-  const primaryColor = colors[0] ?? primaryChartColor(configuredColor);
+  const colors = colorsForSlots(widgetColorFromConfig(widget.config as Record<string, unknown>), points.length);
+  const primaryColor = colors[0] ?? primaryChartColor(widgetColorFromConfig(widget.config as Record<string, unknown>));
   const baseOptions = buildCircularChartOptions(primaryColor);
   const piePlotOptions: ApexOptions["plotOptions"] = chartType === "donut"
     ? {
