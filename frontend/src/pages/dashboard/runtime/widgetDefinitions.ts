@@ -34,15 +34,15 @@ export type DashboardWidgetColorPalette = {
 };
 
 export const dashboardWidgetColorChoices = [
-  "#db1b62",
   "#f0140a",
+  "#058b4f",
+  "#3b82f6",
+  "#db1b62",
   "#ff5722",
   "#f59e0b",
   "#cbd532",
-  "#058b4f",
   "#0ca6a0",
   "#0ea5e9",
-  "#3b82f6",
   "#4357b8",
   "#8e24aa",
 ];
@@ -50,6 +50,36 @@ export const dashboardWidgetColorChoices = [
 export const defaultWidgetColorConfig = {
   colors: ["#f0140a", "#058b4f", "#3b82f6"],
 };
+
+const legacyDefaultWidgetColorSequences = [
+  ["#2563eb", "#f0140a", "#ff5722", "#f59e0b", "#cbd532", "#058b4f"],
+  ["#f0140a", "#f0140a", "#ff5722", "#f59e0b", "#cbd532", "#058b4f"],
+];
+
+export function resolveWidgetColors(colors: string[] | undefined, count: number) {
+  const normalizedColors = (colors ?? []).filter((color) => color.trim().length > 0);
+  const isLegacyDefault = legacyDefaultWidgetColorSequences.some((sequence) => (
+    normalizedColors.length > 0
+    && normalizedColors.length <= sequence.length
+    && normalizedColors.every((color, index) => color.toLowerCase() === sequence[index])
+  ));
+  const explicitColors = isLegacyDefault ? [] : normalizedColors;
+
+  return Array.from({ length: Math.max(0, count) }, (_, index) => (
+    explicitColors[index]
+    ?? dashboardWidgetColorChoices[index % dashboardWidgetColorChoices.length]
+    ?? defaultWidgetColorConfig.colors[index % defaultWidgetColorConfig.colors.length]
+  ));
+}
+
+export function widgetColorFromConfig(config: Record<string, unknown>) {
+  const sourceConfig = config.sourceConfig;
+  if (typeof sourceConfig === "object" && sourceConfig !== null && !Array.isArray(sourceConfig)) {
+    const sourceColor = (sourceConfig as Record<string, unknown>).color;
+    if (sourceColor !== undefined) return sourceColor;
+  }
+  return config.color;
+}
 
 export const dashboardWidgetDefinitions: Record<DashboardRuntimeWidgetType, DashboardWidgetDefinition> = {
   area_chart: {

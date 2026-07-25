@@ -14,7 +14,7 @@ import type {
   DashboardWidgetDateUnit,
   DashboardWidgetSortDirection,
 } from "../../../types";
-import { dashboardWidgetColorChoices, defaultWidgetColorConfig } from "./widgetDefinitions";
+import { defaultWidgetColorConfig, resolveWidgetColors, widgetColorFromConfig } from "./widgetDefinitions";
 import {
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
@@ -368,19 +368,14 @@ function explicitColorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
 
 function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
   const explicitColors = explicitColorsFromConfig(color);
-  if (explicitColors.length) return explicitColors;
-
-  return defaultWidgetColorConfig.colors.length ? defaultWidgetColorConfig.colors : dashboardWidgetColorChoices.slice(0, 6);
+  return resolveWidgetColors(
+    explicitColors,
+    Math.max(explicitColors.length, defaultWidgetColorConfig.colors.length),
+  );
 }
 
 function colorsForSlots(color: DashboardWidgetColorConfig | unknown, count: number) {
-  const explicitColors = explicitColorsFromConfig(color);
-  return Array.from({ length: count }, (_, index) => (
-    explicitColors[index]
-    ?? dashboardWidgetColorChoices[index % dashboardWidgetColorChoices.length]
-    ?? defaultWidgetColorConfig.colors[0]
-    ?? fallbackChartColors[index % fallbackChartColors.length]
-  ));
+  return resolveWidgetColors(explicitColorsFromConfig(color), count);
 }
 
 function primaryChartColor(color: DashboardWidgetColorConfig | unknown) {
@@ -1115,7 +1110,7 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     valueKey,
   });
   if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
-  const colors = colorsFromConfig(widget.config.color);
+  const colors = colorsFromConfig(widgetColorFromConfig(widget.config as Record<string, unknown>));
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const orientation = widget.config.orientation ?? "vertical";
@@ -1167,7 +1162,7 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   });
   if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
 
-  const colors = colorsFromConfig(widget.config.color);
+  const colors = colorsFromConfig(widgetColorFromConfig(widget.config as Record<string, unknown>));
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
@@ -1217,7 +1212,7 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   });
   if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
 
-  const colors = colorsFromConfig(widget.config.color);
+  const colors = colorsFromConfig(widgetColorFromConfig(widget.config as Record<string, unknown>));
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
@@ -1280,8 +1275,8 @@ function PieLikeChartWidget({
   const total = circularChartTotal(allPoints);
   if (total <= 0) return <EmptyWidgetData />;
 
-  const colors = colorsForSlots(widget.config.color, points.length);
-  const primaryColor = colors[0] ?? primaryChartColor(widget.config.color);
+  const colors = colorsForSlots(widgetColorFromConfig(widget.config as Record<string, unknown>), points.length);
+  const primaryColor = colors[0] ?? primaryChartColor(widgetColorFromConfig(widget.config as Record<string, unknown>));
   const baseOptions = buildCircularChartOptions(primaryColor);
   const piePlotOptions: ApexOptions["plotOptions"] = chartType === "donut"
     ? {
@@ -1402,7 +1397,7 @@ function RadialBarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetP
   const max = widget.config.max ?? 100;
   const range = max > min ? max - min : 100;
   const series = points.map((point) => clampPercent(((point.value - min) / range) * 100));
-  const colors = colorsForSlots(widget.config.color, points.length);
+  const colors = colorsForSlots(widgetColorFromConfig(widget.config as Record<string, unknown>), points.length);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
@@ -1476,7 +1471,7 @@ function HeatmapChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetPro
     }),
     name: yLabel,
   }));
-  const colors = colorsFromConfig(widget.config.color);
+  const colors = colorsFromConfig(widgetColorFromConfig(widget.config as Record<string, unknown>));
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
@@ -1510,7 +1505,7 @@ function TreemapChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetPro
     .filter((point) => point.value > 0);
   if (!points.length) return <EmptyWidgetData />;
 
-  const colors = colorsForSlots(widget.config.color, points.length);
+  const colors = colorsForSlots(widgetColorFromConfig(widget.config as Record<string, unknown>), points.length);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
