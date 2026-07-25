@@ -48,7 +48,7 @@ export const dashboardWidgetColorChoices = [
 ];
 
 export const defaultWidgetColorConfig = {
-  colors: ["#2563eb"],
+  colors: ["#f0140a", "#058b4f", "#3b82f6"],
 };
 
 export const dashboardWidgetDefinitions: Record<DashboardRuntimeWidgetType, DashboardWidgetDefinition> = {
