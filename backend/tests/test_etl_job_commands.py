@@ -24,7 +24,7 @@ def _job(job_id: str = "JOB-DELETE") -> SimpleNamespace:
     return SimpleNamespace(id=job_id, name="Delete fixture", owner="owner")
 
 
-def _repository_patches(job: SimpleNamespace):
+def _repository_patches(job: SimpleNamespace, retained_dataset_ids: list[str] | None = None):
     return (
         patch("app.application.etl_job_commands.etl_repository.get_job_for_update", return_value=job),
         patch("app.application.etl_job_commands.etl_repository.list_run_models_for_job", return_value=[]),
@@ -33,6 +33,10 @@ def _repository_patches(job: SimpleNamespace):
         patch(
             "app.application.etl_job_commands.etl_repository.list_kafka_continuous_maintenance_run_models",
             return_value=[],
+        ),
+        patch(
+            "app.application.etl_job_commands.CatalogRepository.mark_producer_deleted",
+            return_value=retained_dataset_ids or [],
         ),
     )
 
@@ -192,11 +196,15 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
                 "app.application.etl_job_commands.etl_repository.list_kafka_continuous_maintenance_run_models",
                 return_value=[],
             ),
+            patch(
+                "app.application.etl_job_commands.CatalogRepository.mark_producer_deleted",
+                side_effect=lambda current_job_id: events.append(f"retain:{current_job_id}") or [],
+            ),
         ):
             deleted_job_id = delete_job(db, job.id, ActorContext(name="owner"), hooks=hooks)
 
         self.assertEqual(deleted_job_id, job.id)
-        self.assertEqual(events, [f"terminate:{job.id}:stopped", "audit"])
+        self.assertEqual(events, [f"terminate:{job.id}:stopped", f"retain:{job.id}", "audit"])
         db.delete.assert_called_once_with(job)
         db.commit.assert_called_once_with()
 
@@ -240,8 +248,12 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
         db = Mock()
         job = _job()
         events: list[str] = []
+        audit_metadata: list[dict[str, object]] = []
         hooks = EtlJobDeleteHooks(
-            add_audit_event=lambda *_args, **_kwargs: events.append("audit"),
+            add_audit_event=lambda *_args, **kwargs: (
+                events.append("audit"),
+                audit_metadata.append(kwargs["metadata"]),
+            ),
             permission_grants_for_job=lambda _db, _job: events.append("grants") or [],
             reconcile_stale_maintenance_runs=lambda *_args, **_kwargs: events.append("reconcile"),
             record_audit_event=Mock(),
@@ -249,7 +261,7 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
             require_permission=lambda *_args, **_kwargs: events.append("permission"),
             terminate_continuous_worker=lambda *_args: events.append("terminate"),
         )
-        repository_patches = _repository_patches(job)
+        repository_patches = _repository_patches(job, retained_dataset_ids=["DATASET-1"])
 
         with (
             repository_patches[0],
@@ -257,11 +269,18 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
             repository_patches[2],
             repository_patches[3],
             repository_patches[4],
+            repository_patches[5] as mark_producer_deleted,
         ):
             deleted_job_id = delete_job(db, job.id, ActorContext(name="owner"), hooks=hooks)
 
         self.assertEqual(deleted_job_id, job.id)
         self.assertEqual(events, ["governance", "grants", "permission", "reconcile", "audit"])
+        mark_producer_deleted.assert_called_once_with(job.id)
+        self.assertEqual(audit_metadata, [{
+            "owner": job.owner,
+            "retainedDatasetIds": ["DATASET-1"],
+            "retainedDatasetCount": 1,
+        }])
         expected_tables = [
             KafkaContinuousBatchModel.__table__.name,
             KafkaContinuousSessionModel.__table__.name,
@@ -300,6 +319,7 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
             repository_patches[2],
             repository_patches[3],
             repository_patches[4],
+            repository_patches[5],
         ):
             with self.assertRaisesRegex(RuntimeError, "commit failed"):
                 delete_job(db, job.id, ActorContext(name="owner"), hooks=hooks)

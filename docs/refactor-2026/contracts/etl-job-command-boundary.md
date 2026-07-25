@@ -2,7 +2,7 @@
 
 ## 목적
 
-`DELETE /api/etl/jobs/{jobId}`의 공개 계약과 배포 동작을 유지하면서 권한 확인, 활성 workload 보호, 종속 레코드 정리, audit와 commit/rollback의 소유권을 `app.application.etl_job_commands`로 모은다.
+`DELETE /api/etl/jobs/{jobId}`의 공개 계약과 배포 동작을 유지하면서 권한 확인, 활성 workload 보호, 종속 운영 레코드 정리, 연결 Catalog Dataset의 자동 갱신 종료 기록, audit와 commit/rollback의 소유권을 `app.application.etl_job_commands`로 모은다.
 
 ## 처리 순서
 
@@ -11,7 +11,7 @@
 3. active Run, Continuous runtime, session과 maintenance 순서로 삭제 가능 여부를 확인한다.
 4. idle Continuous runtime이 있으면 deterministic worker `terminate`를 호출한다. Kubernetes runner는 연결된 SparkApplication object 부재를 bounded polling으로 확인한다.
 5. worker cleanup 오류나 timeout에서는 rollback하고 Job/runtime metadata를 보존한다.
-6. cleanup 성공 뒤 batch, session, maintenance, runtime, Run, snapshot, permission grant와 resource lock을 제거한 뒤 Job을 삭제한다.
+6. cleanup 성공 뒤 batch, session, maintenance, runtime, Run, snapshot, permission grant와 resource lock을 제거한다. 이어서 `producer_job_id`가 Job인 Catalog Dataset을 row lock으로 조회해 source provenance·physical binding·`available` 상태를 유지한 채 `runtimeStatus=producer_deleted`, `nextRefresh=예정 없음`으로 기록한 뒤 Job을 삭제한다. Catalog Dataset row와 물리 저장소는 삭제하지 않는다.
 7. 성공 audit을 같은 transaction에 추가하고 commit한다. commit 예외는 rollback 후 그대로 전파한다.
 
 `etl_service.delete_job`은 기존 router signature를 유지하고 `EtlJobDeleteHooks`에 production governance·permission·audit·maintenance 함수를 조립한다. application module은 service module을 import하지 않는다.
@@ -37,4 +37,4 @@ cd ../frontend
 npm run test:deployed-ui-boundary
 ```
 
-`tests.test_etl_job_commands`는 권한 선행, Continuous terminate 선행, cleanup 실패 metadata 보존, 종속 table 삭제 순서, audit·commit과 commit 실패 rollback을 deterministic하게 고정한다. `tests.test_etl_job_delete`는 실제 SQLite transaction과 PostgreSQL row lock SQL, Airflow/Kafka reservation 동시성 회귀를 계속 담당한다. Node contract는 Kubernetes delete 응답만으로 성공하지 않고 SparkApplication 부재까지 확인하는 경계를 고정한다.
+`tests.test_etl_job_commands`는 권한 선행, Continuous terminate 선행, cleanup 실패 metadata 보존, 종속 table 삭제 순서, 연결 Dataset의 보존·자동 갱신 종료 기록, audit·commit과 commit 실패 rollback을 deterministic하게 고정한다. `tests.test_etl_job_delete`는 실제 SQLite transaction과 PostgreSQL row lock SQL, 연결 Dataset 상태 기록, Airflow/Kafka reservation 동시성 회귀를 계속 담당한다. Node contract는 Kubernetes delete 응답만으로 성공하지 않고 SparkApplication 부재까지 확인하는 경계를 고정한다.

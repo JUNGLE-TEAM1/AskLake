@@ -11,6 +11,8 @@ from unittest.mock import Mock, patch
 
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.auth_context import ActorContext
@@ -18,6 +20,7 @@ from app.core.errors import ApiError
 from app.repositories import etl_repository
 from app.models import (
     AuditEventModel,
+    CatalogDatasetModel,
     ETLJobModel,
     ETLRunModel,
     KafkaContinuousBatchModel,
@@ -41,6 +44,11 @@ from app.services.etl_service import (
     spark_execution_lease_is_active,
     sync_airflow_run,
 )
+
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_for_sqlite(_type, _compiler, **_kwargs):
+    return "JSON"
 
 
 def delete_fixture_job(job_id: str = "JOB-DELETE-TEST") -> ETLJobModel:
@@ -126,6 +134,7 @@ class EtlJobDeleteTests(unittest.TestCase):
                 PrincipalControlModel.__table__,
                 ResourceLockModel.__table__,
                 AuditEventModel.__table__,
+                CatalogDatasetModel.__table__,
             ],
         )
         self.db = Session(self.engine)
@@ -160,6 +169,61 @@ class EtlJobDeleteTests(unittest.TestCase):
         ))
         self.assertIsNotNone(audit_event)
         self.assertEqual(audit_event.result, "success")
+
+    def test_delete_retains_published_dataset_and_ends_automatic_refresh(self) -> None:
+        job = delete_fixture_job("JOB-RETAIN-DATASET")
+        retained_dataset = CatalogDatasetModel(
+            id="DATASET-RETAIN-TEST",
+            name="retained_dataset",
+            payload={
+                "id": "DATASET-RETAIN-TEST",
+                "name": "retained_dataset",
+                "status": "available",
+                "producerJobId": job.id,
+                "runtimeStatus": "available",
+                "nextRefresh": "2026-07-25T00:00:00Z",
+            },
+            status="available",
+            producer_job_id=job.id,
+            runtime_status="available",
+            next_refresh="2026-07-25T00:00:00Z",
+        )
+        unrelated_dataset = CatalogDatasetModel(
+            id="DATASET-UNRELATED-TEST",
+            name="unrelated_dataset",
+            payload={"id": "DATASET-UNRELATED-TEST", "name": "unrelated_dataset"},
+            status="available",
+            producer_job_id="JOB-OTHER",
+            runtime_status="available",
+            next_refresh="2026-07-25T00:00:00Z",
+        )
+        self.db.add_all([job, retained_dataset, unrelated_dataset])
+        self.db.commit()
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.repositories.catalog_repository.ensure_catalog_schema", return_value=None),
+        ):
+            deleted_job_id = delete_job(self.db, job.id, ActorContext(name="Test Admin", role="admin"))
+
+        self.assertEqual(deleted_job_id, job.id)
+        self.assertIsNone(self.db.get(ETLJobModel, job.id))
+
+        retained = self.db.get(CatalogDatasetModel, retained_dataset.id)
+        self.assertIsNotNone(retained)
+        assert retained is not None
+        self.assertEqual(retained.status, "available")
+        self.assertEqual(retained.producer_job_id, job.id)
+        self.assertEqual(retained.runtime_status, "producer_deleted")
+        self.assertEqual(retained.next_refresh, "예정 없음")
+        self.assertEqual(retained.payload["runtimeStatus"], "producer_deleted")
+        self.assertEqual(retained.payload["nextRefresh"], "예정 없음")
+
+        unrelated = self.db.get(CatalogDatasetModel, unrelated_dataset.id)
+        self.assertIsNotNone(unrelated)
+        assert unrelated is not None
+        self.assertEqual(unrelated.runtime_status, "available")
+        self.assertEqual(unrelated.next_refresh, "2026-07-25T00:00:00Z")
 
     def test_delete_terminates_stopped_continuous_runtime_before_commit(self) -> None:
         job = kafka_fixture_job("JOB-CONTINUOUS-DELETE")
@@ -420,6 +484,7 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
                 PrincipalControlModel.__table__,
                 ResourceLockModel.__table__,
                 AuditEventModel.__table__,
+                CatalogDatasetModel.__table__,
             ],
         )
         with self.engine.begin() as connection:

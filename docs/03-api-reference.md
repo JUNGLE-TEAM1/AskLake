@@ -174,7 +174,7 @@ Job 수정 범위는 [ETL Job Edit Contract](etl-job-edit-contract.md), Kafka �
 | `GET` | `/api/etl/jobs/statuses` | Current | Session | 여러 Job의 실행·Continuous 상태 조회 |
 | `GET` | `/api/etl/jobs/{job_id}` | Current | Session | Job 상세 조회 |
 | `PATCH` | `/api/etl/jobs/{job_id}` | Current | Session | 허용된 Job 설정 수정 |
-| `DELETE` | `/api/etl/jobs/{job_id}` | Current | Session | Job 삭제 |
+| `DELETE` | `/api/etl/jobs/{job_id}` | Current | Session | idle runtime 정리 후 Job을 삭제하고 게시 Dataset은 자동 갱신 종료 상태로 유지 |
 | `POST` | `/api/etl/jobs/{job_id}/commands` | Current | Session | run·retry·cancel·Continuous 제어 |
 | `GET` | `/api/etl/jobs/{job_id}/continuous/logs` | Current | Session | redacted Continuous worker log |
 | `GET` | `/api/etl/jobs/{job_id}/continuous/sessions` | Current | Session | Continuous session 목록 |
@@ -190,6 +190,8 @@ Job 수정 범위는 [ETL Job Edit Contract](etl-job-edit-contract.md), Kafka �
 | `GET` | `/api/etl/kafka/replay-producer` | Compatibility | Session | 검증용 replay producer 상태 |
 | `POST` | `/api/etl/kafka/replay-producer` | Compatibility | Session | 검증용 replay producer 시작 |
 | `DELETE` | `/api/etl/kafka/replay-producer` | Compatibility | Session | 검증용 replay producer 중지 |
+
+`DELETE /api/etl/jobs/{job_id}`는 권한과 idle 상태를 확인하고, idle Continuous runtime이 있으면 worker와 SparkApplication 정리를 먼저 확인한다. cleanup 실패 시 Job과 runtime metadata를 보존한다. cleanup 성공 뒤 Job 운영 레코드는 제거하지만 해당 Job이 게시한 Catalog Dataset과 물리 데이터는 삭제하지 않고 `runtimeStatus="producer_deleted"`, `nextRefresh="예정 없음"`으로 기록해 Catalog, SQL 분석, Dashboard에서 계속 조회할 수 있게 한다. Dataset 제거 또는 물리 purge는 별도 Catalog Dataset 삭제 API를 사용한다.
 
 ### 4.5 Catalog·Lineage·Materialization
 
