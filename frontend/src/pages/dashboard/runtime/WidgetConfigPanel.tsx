@@ -60,7 +60,14 @@ import {
   reconcileDashboardWidgetFilters,
 } from "./widgetFilters";
 import { validateWidgetConfig, type WidgetConfigDraft } from "./widgetConfigValidation";
-import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
+import {
+  dashboardWidgetColorChoices,
+  dashboardWidgetDefinitions,
+  dashboardWidgetTypeOptions,
+  defaultWidgetColorConfig,
+  resolveWidgetColors,
+  widgetColorFromConfig,
+} from "./widgetDefinitions";
 import { defaultTimeBucketForColumn } from "./timeSeries";
 import { barChartFieldLabels } from "./barChartAxes";
 import {
@@ -154,13 +161,15 @@ function configBoolean(config: DashboardRuntimeWidgetConfig, key: string) {
 }
 
 function configColor(config: DashboardRuntimeWidgetConfig): DashboardWidgetColorConfig {
-  const value = configRecord(config).color;
+  const value = widgetColorFromConfig(configRecord(config));
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     const record = value as Record<string, unknown>;
     const colors = Array.isArray(record.colors)
       ? record.colors.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
       : undefined;
-    if (colors?.length) return { colors };
+    if (colors?.length) {
+      return { colors: resolveWidgetColors(colors, Math.max(colors.length, defaultWidgetColorConfig.colors.length)) };
+    }
 
     const customColors = Array.isArray(record.customColors)
       ? record.customColors.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
@@ -171,11 +180,7 @@ function configColor(config: DashboardRuntimeWidgetConfig): DashboardWidgetColor
 }
 
 function normalizeColorSlots(colors: string[] | undefined, count: number) {
-  return Array.from({ length: count }, (_, index) => (
-    colors?.[index]
-    ?? dashboardWidgetColorChoices[index % dashboardWidgetColorChoices.length]
-    ?? defaultWidgetColorConfig.colors[0]
-  ));
+  return resolveWidgetColors(colors, count);
 }
 
 function isDataRow(value: unknown): value is Record<string, unknown> {

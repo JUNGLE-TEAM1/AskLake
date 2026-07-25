@@ -5,6 +5,11 @@ import test from "node:test";
 import vm from "node:vm";
 
 import ts from "typescript";
+import {
+  defaultWidgetColorConfig,
+  resolveWidgetColors,
+  widgetColorFromConfig,
+} from "../src/pages/dashboard/runtime/widgetDefinitions.ts";
 
 const frontendRoot = path.resolve(import.meta.dirname, "..");
 const rendererPath = path.join(frontendRoot, "src/pages/dashboard/runtime/WidgetRenderer.tsx");
@@ -53,6 +58,7 @@ function loadCircularChartFunctions() {
 }
 
 const { circularChartTotal, compactCircularChartPoints } = loadCircularChartFunctions();
+const rgb = ["#f0140a", "#058b4f", "#3b82f6"];
 
 function point(label: string, value: number): ChartPoint {
   return { label, sortValue: label, value };
@@ -114,4 +120,24 @@ test("the renderer uses all points for the total and exposes a semantic scrollab
   assert.match(rendererSource, /show: false/);
   assert.match(stylesSource, /\.asklake-circular-chart-legend\s*\{[^}]*overflow-y:\s*auto;/s);
   assert.match(stylesSource, /\.asklake-circular-chart-legend-label\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s);
+});
+
+test("legacy default palettes resolve to the R/G/B default without changing custom colors", () => {
+  assert.deepEqual(resolveWidgetColors(["#2563eb", "#f0140a", "#ff5722"], 3), rgb);
+  assert.deepEqual(resolveWidgetColors(["#f0140a", "#f0140a", "#ff5722"], 3), rgb);
+  assert.deepEqual(
+    resolveWidgetColors(["#f0140a", "#3b82f6", "#ff5722"], 3),
+    ["#f0140a", "#3b82f6", "#ff5722"],
+  );
+  assert.deepEqual(defaultWidgetColorConfig.colors, rgb);
+});
+
+test("runtime widgets prefer the persisted source color over a stale preview palette", () => {
+  assert.deepEqual(
+    widgetColorFromConfig({
+      color: { colors: ["#2563eb", "#f0140a", "#ff5722"] },
+      sourceConfig: { color: { colors: rgb } },
+    }),
+    { colors: rgb },
+  );
 });
