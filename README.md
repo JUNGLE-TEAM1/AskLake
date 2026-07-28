@@ -12,9 +12,6 @@
 ![Trino](https://img.shields.io/badge/Trino-482-DD00A1?logo=trino&logoColor=white)
 
 AskLake는 파일·데이터베이스·스트림·API에 흩어진 데이터를 수집해 스키마와 품질 규칙을 적용합니다. 정제한 데이터는 Iceberg 테이블에 적재한 뒤 카탈로그, SQL, 시맨틱 모델, 대시보드, AI 기능으로 연결합니다.
-
-이 저장소는 화면만 구현한 프로젝트가 아닙니다. React 프론트엔드, FastAPI Control Plane, Airflow/Spark 실행 계층, Iceberg/S3 데이터 레이크, Trino 쿼리 엔진, PostgreSQL 메타데이터 DB, 내부 AI Gateway, AWS 인프라·배포 코드와 검증 자동화를 함께 관리합니다.
-
 ## 목차
 
 - [프로젝트 영상과 포스터](#프로젝트-영상과-포스터)
